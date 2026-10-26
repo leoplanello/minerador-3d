@@ -550,6 +550,31 @@ def model_info(d):
                 downloads=d.get("downloads") if isinstance(d.get("downloads"), int) else None, likes=d.get("likes") if isinstance(d.get("likes"), int) else None)
 
 
+def git(*args, timeout=60):
+    return subprocess.run(["git", *args], cwd=str(paths.SOURCE_ROOT), capture_output=True, text=True, timeout=timeout, creationflags=subprocess.CREATE_NO_WINDOW)
+
+
+def git_behind():
+    """Quantos commits o GitHub tem a mais que esta pasta (0 se não der para saber)."""
+    try:
+        if git("fetch", "-q", timeout=30).returncode:
+            return 0
+        r = git("rev-list", "--count", "HEAD..@{u}")
+        return int(r.stdout.strip() or 0) if not r.returncode else 0
+    except Exception:
+        return 0
+
+
+def git_pull():
+    """Traz as alterações do GitHub sem mexer no que está feito aqui; levanta ValueError com o motivo se não der."""
+    try:
+        r = git("pull", "--ff-only")
+    except Exception as e:
+        raise ValueError(f"não consegui rodar o git: {e}")
+    if r.returncode:
+        raise ValueError("não consegui puxar as alterações: " + (r.stderr.strip() or r.stdout.strip())[:250])
+
+
 def run_restart():
     """Fecha o app e abre de novo (a janela e o servidor). Do código, recarrega os arquivos .py do disco."""
     exe = Path(sys.executable)
@@ -845,6 +870,8 @@ def update_check(force=False):
     if not force and _UPDATE_CHECK["data"] and time.time() - _UPDATE_CHECK["at"] < 600:
         return _UPDATE_CHECK["data"]
     data = updater.check() | dict(frozen=paths.FROZEN)
+    if not paths.FROZEN:  # rodando do código a versão é o git: o que importa é quanto falta puxar do GitHub
+        data["behind"] = git_behind()
     _UPDATE_CHECK.update(at=time.time(), data=data)
     return data
 
@@ -1149,10 +1176,16 @@ class H(BaseHTTPRequestHandler):
             return self._json(dict(ok=True))
         if path == "/api/update/apply":
             info = update_check()
+            if not paths.FROZEN:  # do código: puxa do GitHub e reinicia
+                try:
+                    git_pull()
+                except ValueError as e:
+                    return self._json(dict(error=str(e)), 400)
+                _UPDATE_CHECK["data"] = None
+                threading.Timer(0.5, run_restart).start()
+                return self._json(dict(ok=True, restart=True))
             if not info.get("newer") or not info.get("asset_url"):
                 return self._json(dict(error="não há atualização para instalar"), 400)
-            if not paths.FROZEN:
-                return self._json(dict(error="a atualização automática só funciona no app instalado (.exe)"), 400)
             if UPDATE_JOB["status"] in ("running", "installing"):
                 return self._json(dict(error="a atualização já está em andamento"), 400)
             threading.Thread(target=run_update, args=(info,), daemon=True).start()

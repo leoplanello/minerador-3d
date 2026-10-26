@@ -600,22 +600,27 @@ async function checkUpdate(force) {
     return setTimeout(() => checkUpdate(), 1000);
   }
   if (j.status === 'error') bar.innerHTML = `<div class="alert err"><div class="grow"><b>A atualização falhou</b>${esc(j.msg)}</div><button data-updapply>Tentar de novo</button></div>`;
-  else if (u.newer) bar.innerHTML = `<div class="alert upd"><div class="grow"><b>Versão ${esc(u.latest)} disponível</b><span class="small">Você está na ${esc(u.current)}.${u.notes ? ' ' + esc(u.notes.split('\n').find(l => l.trim() && !/full changelog/i.test(l)) || '') : ''}</span></div>
-      ${u.frozen ? '<button class="pri" data-updapply>Atualizar agora</button>' : `<a class="btn" href="${esc(u.page_url)}" target="_blank" rel="noopener">Ver novidades</a>`}</div>`;
+  else if (!u.frozen && u.behind > 0) bar.innerHTML = `<div class="alert upd"><div class="grow"><b>${u.behind} ${u.behind > 1 ? 'alterações novas' : 'alteração nova'} no GitHub</b><span class="small">Atualizar baixa tudo, fecha o app e abre de novo.</span></div><button class="pri" data-updapply>Atualizar agora</button></div>`;
+  else if (u.frozen && u.newer) bar.innerHTML = `<div class="alert upd"><div class="grow"><b>Versão ${esc(u.latest)} disponível</b><span class="small">Você está na ${esc(u.current)}.${u.notes ? ' ' + esc(u.notes.split('\n').find(l => l.trim() && !/full changelog/i.test(l)) || '') : ''}</span></div>
+      <button class="pri" data-updapply>Atualizar agora</button></div>`;
   else bar.innerHTML = '';
 }
 document.body.addEventListener('click', async e => {
   if (!e.target.closest('[data-updapply]')) return;
   const r = await post('/api/update/apply', {}); if (r.error) return toast(r.error);
-  checkUpdate();
+  r.restart ? waitRestart() : checkUpdate();
 });
+// depois de fechar e abrir de novo, recarrega a tela quando o servidor voltar
+const waitRestart = () => { const wait = () => fetch('/api/state', {cache: 'no-store'}).then(r => r.ok ? location.reload() : setTimeout(wait, 1000)).catch(() => setTimeout(wait, 1000)); setTimeout(wait, 3000); };
 window.onhashchange = go;
 go(); load(); setInterval(load, 3000); Onboarding.init(); checkUpdate(); setInterval(() => checkUpdate(true), 30 * 60 * 1000);
 
+// Atualizar: puxa o que houver de novo (GitHub, ou a release no app instalado) e reinicia; sem novidade, só reinicia
 $('restart').onclick = async () => {
-  if (!confirm('Fechar e abrir o app de novo agora? Leituras e etapas em andamento recomeçam.')) return;
-  $('restart').disabled = true; $('restart').lastChild.textContent = 'Reiniciando…';
-  await post('/api/restart', {}).catch(() => 0);
-  const wait = () => fetch('/api/state', {cache: 'no-store'}).then(r => r.ok ? location.reload() : setTimeout(wait, 1000)).catch(() => setTimeout(wait, 1000));
-  setTimeout(wait, 3000);
+  $('restart').disabled = true; $('restart').lastChild.textContent = 'Atualizando…';
+  const u = await fetch('/api/update/check?force=1').then(r => r.json()).catch(() => ({}));
+  const r = await post(u.frozen ? (u.newer ? '/api/update/apply' : '/api/restart') : (u.behind > 0 ? '/api/update/apply' : '/api/restart'), {}).catch(() => ({}));
+  if (r.error) { $('restart').disabled = false; $('restart').lastChild.textContent = 'Atualizar'; return toast(r.error); }
+  if (u.frozen && u.newer) return checkUpdate();
+  waitRestart();
 };

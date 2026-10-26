@@ -202,3 +202,26 @@ def test_hosts_permitidos_nas_ferramentas():
         assert ti._host_ok(ok)
     for bad in ("http://github.com/a", "https://github.com.evil.com/a", "https://evil.com/github.com"):
         assert not ti._host_ok(bad)
+
+
+def test_atualizar_do_codigo_puxa_do_github(tmp_path, monkeypatch):
+    import subprocess
+    import server
+    run = lambda d, *a: subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *a], cwd=d, check=True, capture_output=True)
+    origin, clone = tmp_path / "origin", tmp_path / "clone"
+    origin.mkdir()
+    run(origin, "init", "-q", "-b", "main")
+    (origin / "a.txt").write_text("1")
+    run(origin, "add", "."); run(origin, "commit", "-qm", "um")
+    run(tmp_path, "clone", "-q", str(origin), str(clone))
+    (origin / "a.txt").write_text("2")
+    run(origin, "commit", "-qam", "dois")
+    monkeypatch.setattr(paths, "SOURCE_ROOT", clone)
+    assert server.git_behind() == 1
+    server.git_pull()
+    assert (clone / "a.txt").read_text() == "2" and server.git_behind() == 0
+    (clone / "a.txt").write_text("sujo")  # alteração local no arquivo que o GitHub muda: o pull recusa e explica
+    (origin / "a.txt").write_text("3")
+    run(origin, "commit", "-qam", "tres")
+    with pytest.raises(ValueError, match="puxar"):
+        server.git_pull()
