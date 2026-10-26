@@ -226,7 +226,7 @@ ol.tl li[data-step] { cursor:pointer } ol.tl li[data-step]:hover > .grow > b { t
 .gal { display:flex; flex-wrap:wrap; gap:6px } .gal img { width:88px; height:88px; object-fit:cover; border-radius:6px }
 
 .testbar { background:#fff8e1; border:1px solid #f1d98a; color:#6b5300; border-radius:var(--r); padding:8px 14px; margin-bottom:12px; font-size:13px }
-.warns { display:grid; gap:8px; margin-bottom:14px } .warn { display:flex; flex-direction:column; gap:2px; padding:10px 14px; background:var(--orange-bg); border-left:4px solid var(--orange); border-radius:6px; font-size:13px }
+.warns { padding:10px 14px; margin-bottom:14px; background:var(--orange-bg); border-left:4px solid var(--orange); border-radius:6px; font-size:13px } .warns ul { margin:6px 0 0; padding-left:18px } .warns li { margin:3px 0 } .warns.ok { background:var(--green-bg,#e8f5ec); border-color:var(--green) }
 .ov { display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:16px } .ov section { display:flex; flex-direction:column; gap:6px; min-width:0 }
 .ov h3 { margin:0; font-size:13px; text-transform:uppercase; letter-spacing:.04em; color:#666 } .ovt { overflow-wrap:anywhere } .ovd { max-height:120px; overflow:auto }
 .ov .thumb.big { width:100%; max-width:220px; height:150px; object-fit:cover; border-radius:8px; background:#eee } .ov .row { flex-wrap:wrap; gap:6px }
@@ -234,3 +234,8 @@ ol.tl li[data-step] { cursor:pointer } ol.tl li[data-step]:hover > .grow > b { t
 .presets { grid-column:1 / -1; display:flex; flex-wrap:wrap; gap:6px; align-items:center }
 .hint { display:block; color:#777; font-weight:400; font-size:11.5px; margin-top:2px }
 .chips { display:inline-flex; flex-wrap:wrap; gap:6px } .mr.cur { outline:2px solid var(--green); border-radius:8px }
+
+a.st { text-decoration:none; color:inherit; cursor:pointer } a.st:hover { text-decoration:underline }
+.card.flash { box-shadow:0 0 0 3px var(--blue); transition:box-shadow .3s }
+
+.testbar { position:relative; padding-right:34px } .testbar .x { position:absolute; right:8px; top:4px; border:0; background:none; font-size:20px; cursor:pointer; color:inherit }

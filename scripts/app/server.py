@@ -555,6 +555,16 @@ def suggest_terms(title):
     return [x for x in out if 2 <= len(x) <= 50][:6]
 
 
+def pick_profile(wanted):
+    """O perfil escolhido na tela; sem ele, o das lojas já cadastradas, ou o único que existe."""
+    profiles = list_profiles()
+    if wanted in profiles:
+        return wanted
+    with db() as c:
+        used = [r[0] for r in c.execute("SELECT profile FROM stores WHERE profile!='' ORDER BY id DESC")]
+    return next((p for p in used if p in profiles), profiles[0] if len(profiles) == 1 else None)
+
+
 def open_url(url, profile=None):
     """Abre um link no navegador padrão, ou no Chrome do perfil do app. Só sites que o app usa."""
     u = urlparse(url)
@@ -1134,7 +1144,7 @@ class H(BaseHTTPRequestHandler):
                     raise ValueError("produto não encontrado")
                 if MODEL_JOBS.get(lid, {}).get("status") == "running":
                     raise ValueError("já tem uma busca ou captura em andamento")
-                profile = data.get("profile") if data.get("profile") in list_profiles() else None
+                profile = pick_profile(data.get("profile"))
                 if path == "/api/model/search":
                     sites = [x for x in data.get("sites", list(model_search.SITES)) if x in model_search.SITES]
                     q = re.sub(r"\s+", " ", str(data.get("q", ""))).strip()[:100]
@@ -1210,7 +1220,7 @@ class H(BaseHTTPRequestHandler):
             return self._json(dict(ok=True))
         if path == "/api/open":
             try:
-                profile = data.get("profile") if data.get("profile") in list_profiles() else None
+                profile = pick_profile(data.get("profile"))
                 open_url(str(data.get("url", "")), profile if data.get("chrome") else None)
             except ValueError as e:
                 return self._json(dict(error=str(e)), 400)

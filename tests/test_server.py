@@ -247,3 +247,20 @@ def test_so_loja_do_mercado_livre_de_verdade():
     for bad in ("https://shopee.com.br/loja_x", "http://www.mercadolivre.com.br/x", "https://evil.com/?u=mercadolivre.com.br",
                 "https://mercadolivre.com.br.evil.com/x"):
         assert p(bad) is None
+
+
+def test_perfil_padrao_e_info_do_modelo(tmp_path, monkeypatch):
+    _produto(tmp_path, monkeypatch)
+    monkeypatch.setattr(server, "list_profiles", lambda: ["a", "b"])
+    assert server.pick_profile("b") == "b" and server.pick_profile("") is None  # dois perfis e nenhum escolhido: não adivinha
+    with server.db() as c:
+        c.execute("UPDATE stores SET profile='a' WHERE id=1")
+    assert server.pick_profile(None) == "a"  # usa o perfil das lojas já cadastradas
+    monkeypatch.setattr(server, "list_profiles", lambda: ["só"])
+    with server.db() as c:
+        c.execute("UPDATE stores SET profile=''")
+    assert server.pick_profile("") == "só"
+    server.set_model(1, "m.stl", b"x")
+    server.set_model_meta(1, "https://www.printables.com/model/1", "ok", server.model_info(dict(thumb="http://x/a.jpg", author="Ana", q="chaves", downloads=5)))
+    (cand,) = server.candidates()
+    assert cand["model"]["info"] == dict(thumb="", author="Ana", query="chaves", file_size=None, model_id="", downloads=5, likes=None)  # thumb só https

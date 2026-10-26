@@ -215,9 +215,6 @@ const VIEWS = {
           <label>Palavras-chave (separe com vírgula)<input id="tkey"></label>
           <div class="row"><button id="tgen" class="pri">Gerar com Claude</button><button id="tsave">Salvar edições</button></div>
         </div></div>
-      <div class="card" id="shcard" hidden><div class="card-h"><h2>Publicar na Shopee</h2><span id="shchip" class="chip"></span></div>
-        <p id="shstate" class="small mut" style="margin:0 0 12px"></p>
-        <div class="row" style="margin-top:12px"><input id="shurl" type="url" placeholder="Link do anúncio na Shopee (opcional)" style="flex:1;height:40px"><button id="shdone">Marquei como publicado</button></div></div>
       <div class="card" id="icard" hidden><div class="card-h"><h2>Imagens do anúncio</h2><span id="ichip" class="chip"></span></div>
         <p id="istate" class="small mut" style="margin:0 0 12px"></p>
         <details class="cfg" open><summary>Configurar as imagens</summary><div id="icfg" class="cfgform"></div></details>
@@ -244,7 +241,10 @@ const VIEWS = {
           <div id="mlcats"></div><div id="mlattrs" class="form"></div>
           <label>Quantidade disponível (a peça é feita sob encomenda; o ML exige pelo menos 1)<input id="mlqty" type="number" min="1" max="50" value="5"></label>
           <div class="row"><button id="mlval">Validar no Mercado Livre</button><button id="mlpub" class="pri">Publicar</button></div>
-        </div></div>`,
+        </div></div>
+      <div class="card" id="shcard" hidden><div class="card-h"><h2>Publicar na Shopee</h2><span id="shchip" class="chip"></span></div>
+        <p id="shstate" class="small mut" style="margin:0 0 12px"></p>
+        <div class="row" style="margin-top:12px"><input id="shurl" type="url" placeholder="Link do anúncio na Shopee (opcional)" style="flex:1;height:40px"><button id="shdone">Marquei como publicado</button></div></div>`,
     bind: () => {
       const id = () => +route[1];
       const mlargs = () => ({id: id(), category_id: (document.querySelector('[name=mlcat]:checked') || {}).value,
@@ -329,7 +329,7 @@ const VIEWS = {
         `<div class="crumb"><a href="#/producao">Produção</a> › ${esc(c.title)}</div>
          <div class="card"><div class="card-h"><h2>${esc(c.title)}</h2><a href="${esc(c.url)}" target="_blank" rel="noopener">Ver anúncio original</a></div>
            <div class="price">${price(c.price)}<span class="sold">+${c.sold} vendidos · ${c.reviews} avaliações</span></div>
-           <div class="stepper">${stepper(c)}</div>
+           <div class="stepper">${stepper(c, 1)}</div>
            ${(() => { const [t, d, a, k] = nextAction(c); return `<div class="next ${k || ''}"><div class="grow"><b>${esc(t)}</b><div class="small">${esc(d)}</div></div>${a === 'auto' ? `<button class="pri" data-auto="${c.id}">${ic('refresh')}Rodar etapas automáticas</button>` : ''}</div>`; })()}</div>`;
       if (!c) return;
       $('ovcard').hidden = false; $('ovcard').innerHTML = overview(c);
@@ -383,6 +383,7 @@ const VIEWS = {
         const pub = c.publications.ml;
         if (!$('mlq').value) $('mlq').value = c.kit.title;
         fetch('/api/ml/status').then(r => r.json()).then(m => {
+          if (!$('mlchip')) return;  // saiu da página enquanto a resposta vinha
           $('mlchip').className = 'chip ' + (pub ? 'ok' : m.connected ? 'running' : 'blocked'); $('mlchip').textContent = pub ? 'Publicado' : m.connected ? 'Conta conectada' : m.configured ? 'Falta conectar' : 'Falta configurar';
           $('mlform').hidden = !m.connected || !!pub;
           $('mlstate').innerHTML = pub ? `Publicado: <a href="${esc(pub.url)}" target="_blank" rel="noopener">${esc(pub.external_id)}</a>` : m.connected ? 'Escolha a categoria, valide e publique. Nada vai ao ar sem o seu segundo clique.'
@@ -487,7 +488,7 @@ function overview(c) {
   const m = c.model || {}, mi = m.info || {}, sl = c.slice, M = c.margin, k = c.kit, ms = c.msearch || {};
   const btn = (u, t, chrome) => `<button class="sm ghost" data-open="${esc(u)}" ${chrome ? 'data-chrome="1"' : ''}>${t}</button>`;
   const ws = warnings(c);
-  return `${ws.length ? `<div class="warns">${ws.map(([t, d]) => `<div class="warn"><b>${esc(t)}</b><span>${esc(d)}</span></div>`).join('')}</div>` : ''}
+  return `${ws.length ? `<div class="warns"><b>Atenção (${ws.length})</b><ul>${ws.map(([t, d]) => `<li><b>${esc(t)}.</b> ${esc(d)}</li>`).join('')}</ul></div>` : '<div class="warns ok"><b>Sem avisos neste produto.</b></div>'}
   <div class="ov">
     <section><h3>Anúncio de origem</h3>${img(c)}<b class="ovt">${esc(c.title)}</b>
       <div class="small mut">${esc(c.store_name || '')}${c.material ? ' · ' + esc(c.material.replace(/^[:\s]+/, '')) : ''}</div>
@@ -509,8 +510,10 @@ function overview(c) {
       ${c.images.length ? `<div class="gal">${c.images.slice(0, 4).map(n => `<a href="/products/${c.id}/renders/${n}" target="_blank"><img src="/products/${c.id}/renders/${n}" alt="" loading="lazy"></a>`).join('')}</div>` : ''}</section>
   </div>`;
 }
-const stepper = c => S.steps.map(n => { const s = c.steps[n] || 'pending';
-  return `<div class="st ${esc(s)}" title="${STATUS_LABEL[s] || s}">${STEP_LABEL[n] || n}</div>`; }).join('');
+const STEP_CARD = {model:'mcard', slice:'scard', cost:'ccard', copy:'tcard', images:'icard', kit:'kcard', ml:'mlcard', shopee:'shcard', video:'vcard'};
+const stepper = (c, nav) => S.steps.map(n => { const s = c.steps[n] || 'pending';
+  return nav ? `<a class="st ${esc(s)}" href="#" data-goto="${STEP_CARD[n] || ''}" title="${STATUS_LABEL[s] || s}. Clique para ir até esta etapa.">${STEP_LABEL[n] || n}</a>`
+    : `<div class="st ${esc(s)}" title="${STATUS_LABEL[s] || s}">${STEP_LABEL[n] || n}</div>`; }).join('');
 
 // o que fazer agora neste produto: [título, explicação, ação?]
 function nextAction(c) {
@@ -715,3 +718,12 @@ document.body.addEventListener('click', async e => {
   const r = await post('/api/open', {url, chrome: !!(b && b.dataset.chrome), profile: $('profile').value});
   if (r.error) { toast(r.error); if (!b || !b.dataset.chrome) window.open(url, '_blank'); }
 });
+
+// as etapas do topo levam ao cartão de cada uma
+document.body.addEventListener('click', e => { const g = e.target.closest('[data-goto]'); if (!g) return; e.preventDefault();
+  const el = $(g.dataset.goto); if (el && !el.hidden) { el.scrollIntoView({behavior: 'smooth', block: 'start'}); el.classList.add('flash'); setTimeout(() => el.classList.remove('flash'), 1400); } else toast('Esta etapa ainda não está liberada: faça as anteriores primeiro'); });
+
+// a faixa de modo de teste pode ser fechada; lembra a escolha
+(() => { const bar = document.querySelector('.testbar'); let off = false; try { off = localStorage.getItem('testbar') === '0'; } catch (e) {}
+  if (off) bar.hidden = true; bar.insertAdjacentHTML('beforeend', '<button class="x" title="Fechar este aviso" aria-label="Fechar">×</button>');
+  bar.querySelector('.x').onclick = () => { bar.hidden = true; try { localStorage.setItem('testbar', '0'); } catch (e) {} }; })();
