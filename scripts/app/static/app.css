@@ -216,3 +216,11 @@ ol.tl li.ok .dotx { background:var(--green) } ol.tl li.running .dotx { backgroun
 
 .alert.upd { background:var(--blue-bg); border-color:var(--blue); align-items:center }
 .side .ver { padding:8px 16px 2px; border-top:1px solid var(--line); margin-top:6px }
+
+.topbtn { margin-left:10px; display:flex; align-items:center; gap:6px; padding:5px 12px; border-radius:99px; border:0; background:rgba(0,0,0,.08); color:inherit; font-weight:600; font-size:13px; cursor:pointer }
+.topbtn:hover { background:rgba(0,0,0,.16) } .topbtn:disabled { opacity:.6; cursor:wait }
+ol.tl li[data-step] { cursor:pointer } ol.tl li[data-step]:hover > .grow > b { text-decoration:underline }
+.tlmore { margin-left:6px } .tldet { margin-top:8px; padding:10px 12px; background:#f7f7f7; border:1px solid var(--line); border-radius:6px; cursor:default }
+.kv { display:grid; grid-template-columns:max-content 1fr; gap:4px 14px; margin:8px 0 0; font-size:13px } .kv dt { color:#666 } .kv dd { margin:0; overflow-wrap:anywhere } .kv ul { margin:0; padding-left:18px }
+.adbox { display:flex; gap:10px; align-items:center; margin-bottom:8px } .adbox .thumb { width:64px; height:64px; object-fit:cover; border-radius:6px; flex:none }
+.gal { display:flex; flex-wrap:wrap; gap:6px } .gal img { width:88px; height:88px; object-fit:cover; border-radius:6px }

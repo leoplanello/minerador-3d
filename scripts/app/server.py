@@ -61,6 +61,8 @@ def init():
                          ("sales", "INTEGER"), ("rating", "REAL"), ("followers", "INTEGER"), ("logo", "TEXT DEFAULT ''"), ("read_at", "TEXT DEFAULT ''")]:
             if col not in [r[1] for r in c.execute("PRAGMA table_info(stores)")]:  # dados da loja, adicionados depois
                 c.execute(f"ALTER TABLE stores ADD COLUMN {col} {ddl}")
+        if "info" not in [r[1] for r in c.execute("PRAGMA table_info(models)")]:  # título, autor, imagem e números do modelo escolhido (JSON)
+            c.execute("ALTER TABLE models ADD COLUMN info TEXT DEFAULT ''")
         for col in ("started", "ts"):  # quando cada etapa começou e mudou de estado por último
             if col not in [r[1] for r in c.execute("PRAGMA table_info(steps)")]:
                 c.execute(f"ALTER TABLE steps ADD COLUMN {col} TEXT")
@@ -492,12 +494,14 @@ def run_slice(lid):
         step("error", str(e)[:300])
 
 
-def set_model_meta(lid, source_url, license_note):
+def set_model_meta(lid, source_url, license_note, info=None):
     if source_url and not re.match(r"https?://", source_url):  # o link é exibido na GUI
         raise ValueError("o link do modelo deve começar com http:// ou https://")
     with lock, db() as c:
         c.execute("INSERT INTO models(listing_id,source_url,license_note) VALUES(?,?,?) ON CONFLICT(listing_id) DO UPDATE SET"
                   " source_url=excluded.source_url, license_note=excluded.license_note", (lid, source_url[:500], license_note[:500]))
+        if info is not None:
+            c.execute("UPDATE models SET info=? WHERE listing_id=?", (json.dumps(info, ensure_ascii=False), lid))
 
 
 MODEL_JOBS = {}  # lid -> estado da busca/captura de modelo, só em memória (a tela consulta)
@@ -531,11 +535,31 @@ def run_model_search(lid, q, profile, sites):
         job.update(status="error", msg=str(e)[:300])
 
 
-def get_printables_model(lid, model_id, file_id, title, url, license_name):
+def get_printables_model(lid, model_id, file_id, title, url, license_name, info=None):
     """Baixa o arquivo pelo Printables e já guarda como modelo do produto, com link e licença."""
     name, data = model_search.printables_download(model_id, file_id)
     set_model(lid, name, data)
-    set_model_meta(lid, url, license_note(dict(license=license_name, commercial=model_search.commercial_ok(license_name), source="Printables")))
+    set_model_meta(lid, url, license_note(dict(license=license_name, commercial=model_search.commercial_ok(license_name), source="Printables")),
+                   dict(info or {}, title=title, source="Printables", file=name))
+
+
+def model_info(d):
+    """Dados do modelo escolhido que a tela mostra: imagem (só https), autor e números da página."""
+    thumb = str(d.get("thumb", ""))
+    return dict(thumb=thumb if thumb.startswith("https://") else "", author=str(d.get("author", ""))[:80],
+                downloads=d.get("downloads") if isinstance(d.get("downloads"), int) else None, likes=d.get("likes") if isinstance(d.get("likes"), int) else None)
+
+
+def run_restart():
+    """Fecha o app e abre de novo (a janela e o servidor). Do código, recarrega os arquivos .py do disco."""
+    exe = Path(sys.executable)
+    cmd = f'"{exe}"' if paths.FROZEN else f'"{exe.with_name("pythonw.exe") if exe.name.lower() == "python.exe" else exe}" "{Path(__file__).with_name("desktop.py")}"'
+    # espera as portas fecharem e só então abre; roda solto, para sobreviver a este processo
+    subprocess.Popen(f'cmd /c ping -n 4 127.0.0.1 >nul & start "" {cmd}', cwd=str(paths.SOURCE_ROOT if not paths.FROZEN else paths.HOME), shell=True,
+                     creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW)
+    if not paths.FROZEN:  # o servidor é filho da janela (desktop.py): fecha a janela junto
+        subprocess.run(["taskkill", "/F", "/PID", str(os.getppid())], creationflags=subprocess.CREATE_NO_WINDOW)
+    os._exit(0)
 
 
 def run_model_capture(lid, url, profile, license_name, source):
@@ -680,7 +704,7 @@ def candidates():
             step_times = {s["name"]: dict(started=s["started"], ts=s["ts"], seconds=int((datetime.fromisoformat(s["ts"]) - datetime.fromisoformat(s["started"])).total_seconds())
                                           if s["started"] and s["ts"] and s["status"] in ("ok", "error") else None)
                           for s in c.execute("SELECT name,status,started,ts FROM steps WHERE listing_id=?", (l["id"],))}
-            model = c.execute("SELECT source_url,license_note,file_path FROM models WHERE listing_id=?", (l["id"],)).fetchone()
+            model = c.execute("SELECT source_url,license_note,file_path,info,added_at FROM models WHERE listing_id=?", (l["id"],)).fetchone()
             sl = c.execute("SELECT minutes,grams FROM slices WHERE listing_id=?", (l["id"],)).fetchone()
             slmsg = c.execute("SELECT data FROM steps WHERE listing_id=? AND name='slice'", (l["id"],)).fetchone()
             kit = c.execute("SELECT title,description,bullets,scripts,keywords,confirmed FROM kits WHERE listing_id=?", (l["id"],)).fetchone()
@@ -692,7 +716,7 @@ def candidates():
             target = (json.loads(cprice["data"]).get("price") if cprice else None) or l["price"]
             margin = {ch: custos.calc(cc, sl["minutes"], sl["grams"], target, ch) for ch in ("ml", "shopee")} if sl and target else None
             rows.append(dict(l) | dict(sold=last["sold"], reviews=last["reviews"], growth=growth, snapshots=len(snaps),
-                                      sold_growth=last["sold"] - first["sold"], since=first["ts"], last_seen=last["ts"], model=dict(model) if model else None, slice=dict(sl) if sl else None, margin=margin, target_price=target,
+                                      sold_growth=last["sold"] - first["sold"], since=first["ts"], last_seen=last["ts"], model=dict(model) | dict(info=json.loads(model["info"] or "{}")) if model else None, slice_file=(sl_file["file_path"] if (sl_file := c.execute("SELECT file_path FROM slices WHERE listing_id=?", (l["id"],)).fetchone()) else ""), slice=dict(sl) if sl else None, margin=margin, target_price=target,
                                       kit=dict(kit) | {k: json.loads(kit[k]) for k in ("bullets", "scripts", "keywords")} if kit else None,
                                       copy_msg=json.loads(cpmsg["data"]).get("msg", "") if cpmsg else "",
                                       publications=pubs, auto=AUTO.get(l["id"]), step_times=step_times, video_msg=json.loads(vmsg["data"]).get("msg", "") if vmsg else "",
@@ -1056,7 +1080,7 @@ class H(BaseHTTPRequestHandler):
                         raise ValueError("digite o que buscar")
                     threading.Thread(target=run_model_search, args=(lid, q, profile, sites), daemon=True).start()
                 elif path == "/api/model/get":
-                    get_printables_model(lid, str(data["model_id"]), str(data["file_id"]), str(data.get("title", "")), str(data.get("url", "")), str(data.get("license", "")))
+                    get_printables_model(lid, str(data["model_id"]), str(data["file_id"]), str(data.get("title", "")), str(data.get("url", "")), str(data.get("license", "")), model_info(data))
                 else:
                     if not profile:
                         raise ValueError("escolha um perfil do Chrome no topo da tela")
@@ -1119,6 +1143,9 @@ class H(BaseHTTPRequestHandler):
             if any(j.get("status") == "running" for j in TOOL_JOBS.values()):
                 return self._json(dict(error="já tem um download em andamento"), 400)
             threading.Thread(target=run_tool_install, args=(name,), daemon=True).start()
+            return self._json(dict(ok=True))
+        if path == "/api/restart":
+            threading.Timer(0.5, run_restart).start()  # responde antes de fechar
             return self._json(dict(ok=True))
         if path == "/api/update/apply":
             info = update_check()

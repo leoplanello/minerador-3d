@@ -250,7 +250,7 @@ const VIEWS = {
         if (r.error) return toast(r.error); pollModel(id()); };
       $('msres').onclick = async e => {
         const f = e.target.closest('[data-mfile]'), g = e.target.closest('[data-mpick]'); const job = MJOB.results || [];
-        if (f) { const it = job[+f.dataset.i]; const r = await post('/api/model/get', {id: id(), model_id: it.id, file_id: f.dataset.mfile, title: it.title, url: it.url, license: it.license});
+        if (f) { const it = job[+f.dataset.i]; const r = await post('/api/model/get', {id: id(), model_id: it.id, file_id: f.dataset.mfile, title: it.title, url: it.url, license: it.license, thumb: it.thumb, author: it.author, downloads: it.downloads, likes: it.likes});
           toast(r.error || 'Modelo baixado e guardado'); load(); return; }
         if (g) { const it = job[+g.dataset.mpick];
           if (it.source === 'printables') { const box = $('mf' + g.dataset.mpick); box.textContent = 'Carregando arquivos…';
@@ -324,10 +324,14 @@ const VIEWS = {
       $('tlcard').hidden = false;
       const msgs = {slice: c.slice_msg, copy: c.copy_msg, images: c.images_msg, video: c.video_msg, shopee: ''};
       $('tline').innerHTML = `<ol class="tl">${S.steps.map(n => { const st = c.steps[n] || 'pending', t = (c.step_times || {})[n] || {}, own = c.publications[n];
-        return `<li class="${esc(st)}"><span class="dotx"></span><div class="grow"><b>${esc(STEP_LABEL[n] || n)}</b>
+        return `<li class="${esc(st)}" data-step="${n}" tabindex="0" role="button" aria-expanded="${OPEN.has(n)}"><span class="dotx"></span><div class="grow"><b>${esc(STEP_LABEL[n] || n)}</b> <span class="small mut tlmore">${OPEN.has(n) ? '▾ ocultar' : '▸ ver detalhes'}</span>
           <span class="chip ${esc(st)}">${STATUS_LABEL[st] || esc(st)}</span>${st === 'running' ? ' <span class="small mut">em andamento…</span>' : ''}
           <div class="small mut">${t.started ? 'começou ' + localTime(t.started) : ''}${t.seconds != null && t.seconds > 0 ? ' · levou ' + fmtDur(t.seconds) : ''}${own && own.url ? ` · <a href="${esc(own.url)}" target="_blank" rel="noopener">abrir anúncio</a>` : ''}</div>
-          ${st === 'error' && msgs[n] ? `<div class="small" style="color:var(--red)">${esc(msgs[n])}</div>` : ''}</div></li>`; }).join('')}</ol>`;
+          ${st === 'error' && msgs[n] ? `<div class="small" style="color:var(--red)">${esc(msgs[n])}</div>` : ''}
+          ${OPEN.has(n) ? `<div class="tldet">${stepDetail(c, n)}</div>` : ''}</div></li>`; }).join('')}</ol>`;
+      $('tline').onclick = e => { if (e.target.closest('a, video, .tldet')) return; const li = e.target.closest('li[data-step]'); if (!li) return;
+        OPEN.has(li.dataset.step) ? OPEN.delete(li.dataset.step) : OPEN.add(li.dataset.step); VIEWS.produto.update(); };
+      $('tline').onkeydown = e => { if (e.target.dataset && e.target.dataset.step && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); e.target.click(); } };
       const m = c.model || {}, hasFile = !!m.file_path;
       if (!$('msq').dataset.init) { $('msq').value = (c.title || '').split(' ').slice(0, 5).join(' '); $('msq').dataset.init = 1; pollModel(c.id); }
       if (!$('mlink').dataset.init) { $('mlink').value = m.source_url || ''; $('mlic').value = m.license_note || ''; $('mlink').dataset.init = 1; }
@@ -424,6 +428,34 @@ const spark = h => { const lo = Math.min(...h), span = Math.max(...h) - lo || 1;
   return `<svg width="64" height="20" viewBox="0 0 64 20" aria-hidden="true"><polyline fill="none" stroke="currentColor" stroke-width="1.5" points="${h.map((v, i) => `${(i / (h.length - 1) * 62 + 1).toFixed(1)},${(18 - (v - lo) / span * 16).toFixed(1)}`).join(' ')}"/></svg>`; };
 const growthInfo = c => c.snapshots < 2 ? '<span>lido uma vez, sem histórico ainda</span>'
   : `<span style="color:${c.growth > 0 || c.sold_growth > 0 ? 'var(--green)' : 'inherit'}"><b>+${num(c.growth)}</b> avaliações · <b>+${num(c.sold_growth)}</b> vendidos desde ${esc(String(c.since).slice(0, 10).split('-').reverse().join('/'))} ${spark(c.history)}</span>`;
+const OPEN = new Set();  // etapas abertas na linha do tempo (sobrevive às atualizações da tela)
+const link = (u, t) => u ? `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(t || u)}</a>` : '—';
+const kv = rows => `<dl class="kv">${rows.filter(r => r[1] != null && r[1] !== '').map(([k, v, raw]) => `<dt>${k}</dt><dd>${raw ? v : esc(v)}</dd>`).join('')}</dl>`;
+const mdur = m => `${Math.floor(m / 60)} h ${m % 60} min`;
+const pct = v => v.toLocaleString('pt-BR', {maximumFractionDigits: 1}) + '%';
+// o que a etapa fez, com os dados exatos que ela usou ou gerou
+function stepDetail(c, n) {
+  const m = c.model || {}, mi = m.info || {}, sl = c.slice, k = c.kit, t = (c.step_times || {})[n] || {}, pub = c.publications || {}, M = c.margin;
+  const when = kv([['Começou', localTime(t.started)], ['Última mudança', localTime(t.ts)], ['Duração', t.seconds > 0 ? fmtDur(t.seconds) : '']]);
+  const ad = `<div class="adbox">${img(c)}<div><b>${esc(c.title)}</b><div class="small mut">${esc(c.store_name || '')} · ${c.material ? esc(c.material.replace(/^[:\s]+/, '')) + ' · ' : ''}${price(c.price)} · +${num(c.sold)} vendidos · ${num(c.reviews)} avaliações</div>
+    <div class="small">${link(c.url, 'Abrir o anúncio original no Mercado Livre')}</div></div></div>`;
+  if (n === 'model') return ad + (m.file_path ? `<div class="adbox">${mi.thumb ? `<img class="thumb" src="${esc(mi.thumb)}" alt="" referrerpolicy="no-referrer">` : '<div class="thumb"></div>'}<div><b>${esc(mi.title || m.file_path.split('/').pop())}</b>
+    <div class="small">${link(m.source_url, 'Abrir a página do modelo')}</div></div></div>` + kv([['Fonte', mi.source], ['Autor', mi.author], ['Downloads', mi.downloads != null ? num(mi.downloads) : ''], ['Curtidas', mi.likes != null ? num(mi.likes) : ''],
+      ['Licença', m.license_note], ['Arquivo baixado', mi.file], ['Guardado em', m.file_path], ['Adicionado', localTime(m.added_at)]]) + when : '<div class="small mut">Ainda sem modelo. Busque no cartão “Modelo 3D” abaixo.</div>');
+  if (n === 'slice') return sl ? kv([['Tempo de impressão', mdur(sl.minutes)], ['Filamento', sl.grams.toLocaleString('pt-BR', {minimumFractionDigits: 1}) + ' g de PLA'], ['Perfil', 'Bambu Lab A1, bocal 0,4 mm, camada 0,20 mm'],
+    ['Modelo fatiado', m.file_path], ['G-code', c.slice_file]]) + when : '<div class="small mut">Ainda não fatiado.</div>';
+  if (n === 'cost') return M ? kv([['Preço do anúncio', brl(c.target_price)], ['Custos', c.costs_confirmed ? 'confirmados' : 'provisórios (estimativas)'], ['Base', sl ? `${mdur(sl.minutes)} e ${sl.grams} g` : ''],
+    ['Mercado Livre', `produção ${brl(M.ml.producao)} · taxas ${brl(M.ml.taxas)} · lucro ${brl(M.ml.lucro)} (${pct(M.ml.margem_pct)})`],
+    ['Shopee', `produção ${brl(M.shopee.producao)} · taxas ${brl(M.shopee.taxas)} · lucro ${brl(M.shopee.lucro)} (${pct(M.shopee.margem_pct)})`]]) + when : '<div class="small mut">Depende do fatiamento.</div>';
+  if (n === 'copy') return k ? kv([['Título', k.title], ['Descrição', esc(k.description).replace(/\n/g, '<br>'), 1], ['Bullets', '<ul>' + k.bullets.map(b => `<li>${esc(b)}</li>`).join('') + '</ul>', 1],
+    ['Palavras-chave', k.keywords.join(', ')], ['Roteiros', k.scripts.map(x => esc(x)).join('<br><br>'), 1]]) + when : `<div class="small mut">${esc(c.copy_msg) || 'Texto ainda não gerado.'}</div>`;
+  if (n === 'images') return (c.media.length ? `<div class="gal">${c.media.map(x => `<a href="/products/${c.id}/renders/${x.name}" target="_blank" rel="noopener"><img src="/products/${c.id}/renders/${x.name}" alt="" loading="lazy"></a>`).join('')}</div>`
+    + kv([['Imagens', c.media.length + (c.images.length !== c.media.length ? ` (${c.images.length} visíveis)` : '')]]) : `<div class="small mut">${esc(c.images_msg) || 'Imagens ainda não geradas.'}</div>`) + when;
+  if (n === 'kit') return kv([['Situação', c.steps.kit === 'ok' ? 'Confirmado' : 'Ainda não confirmado'], ['Título', k && k.title], ['Imagens', c.images.length]]) + when;
+  if (n === 'video') return (c.steps.video === 'ok' ? `<video src="/products/${c.id}/kit/video.mp4" controls style="max-width:100%;max-height:320px;border-radius:6px"></video>` : '')
+    + kv([['Resultado', c.video_msg], ['Voz', c.has_voice ? 'enviada' : 'sem voz'], ['Música', c.has_music ? 'enviada' : 'sem música']]) + when;
+  const p = pub[n]; return kv([['Anúncio publicado', p ? link(p.url, p.url || p.external_id) : 'ainda não publicado', 1], ['Código', p && p.external_id]]) + when;
+}
 const stepper = c => S.steps.map(n => { const s = c.steps[n] || 'pending';
   return `<div class="st ${esc(s)}" title="${STATUS_LABEL[s] || s}">${STEP_LABEL[n] || n}</div>`; }).join('');
 
@@ -579,3 +611,11 @@ document.body.addEventListener('click', async e => {
 });
 window.onhashchange = go;
 go(); load(); setInterval(load, 3000); Onboarding.init(); checkUpdate(); setInterval(() => checkUpdate(true), 30 * 60 * 1000);
+
+$('restart').onclick = async () => {
+  if (!confirm('Fechar e abrir o app de novo agora? Leituras e etapas em andamento recomeçam.')) return;
+  $('restart').disabled = true; $('restart').lastChild.textContent = 'Reiniciando…';
+  await post('/api/restart', {}).catch(() => 0);
+  const wait = () => fetch('/api/state', {cache: 'no-store'}).then(r => r.ok ? location.reload() : setTimeout(wait, 1000)).catch(() => setTimeout(wait, 1000));
+  setTimeout(wait, 3000);
+};
