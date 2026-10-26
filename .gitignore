@@ -1,0 +1,20 @@
+# dados e ferramentas do usuário: nunca vão para o repositório
+db/*
+!db/schema.sql
+products/
+inbox/
+tools/
+docs/
+secrets.json
+*.sqlite
+
+# build e cache
+dist/
+build/work/
+build/minerador.ico
+VERSION
+__pycache__/
+*.pyc
+.pytest_cache/
+.claude/
+*.log

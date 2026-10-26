@@ -1,0 +1,37 @@
+name: Release
+
+# Publica uma versão ao criar uma tag no formato v1.2.3:  git tag v1.2.3 && git push origin v1.2.3
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - run: pip install -r requirements.txt pytest pyinstaller
+      - name: Testes
+        run: python -m pytest tests -q
+      - name: Inno Setup
+        shell: pwsh
+        run: |
+          if (-not (Get-Command iscc -ErrorAction SilentlyContinue) -and -not (Test-Path "C:\Program Files (x86)\Inno Setup 6\ISCC.exe")) {
+            choco install innosetup --no-progress -y
+          }
+      - name: Programa e instalador
+        run: python build/build.py "${{ github.ref_name }}"
+      - name: Publica a release (instalador e SHA-256, que o app confere ao atualizar)
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" (Get-ChildItem dist\Minerador3D-Setup-*.exe).FullName (Get-ChildItem dist\Minerador3D-Setup-*.exe.sha256).FullName `
+            --title "Minerador 3D ${{ github.ref_name }}" --generate-notes
