@@ -53,6 +53,18 @@ def test_check_sem_rede_devolve_erro_sem_quebrar(monkeypatch):
     assert "sem rede" in r["error"] and not r.get("newer")
 
 
+def test_sem_nenhuma_release_nao_e_erro(monkeypatch):
+    import urllib.error
+
+    def sem_release(req, timeout=0):
+        raise urllib.error.HTTPError("u", 404, "Not Found", {}, None)
+    monkeypatch.setattr(updater.urllib.request, "urlopen", sem_release)
+    r = updater.check("1.0.0")
+    assert r["newer"] is False and "error" not in r
+    monkeypatch.setattr(updater.urllib.request, "urlopen", lambda req, timeout=0: (_ for _ in ()).throw(urllib.error.HTTPError("u", 403, "rate limit", {}, None)))
+    assert "403" in updater.check("1.0.0")["error"]
+
+
 def _info(corpo, hash_certo=True):
     sha = hashlib.sha256(corpo).hexdigest() if hash_certo else "0" * 64
     return dict(asset_url="https://github.com/o/r/a.exe", sha_url="https://github.com/o/r/a.exe.sha256", asset_name="Minerador3D-Setup-1.1.0.exe", size=len(corpo)), sha

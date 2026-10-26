@@ -5,6 +5,7 @@ import json
 import os
 import re
 import subprocess
+import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -42,6 +43,10 @@ def check(current=None):
     try:
         req = urllib.request.Request(API, headers=UA)
         rel = json.load(urllib.request.urlopen(req, timeout=15))
+    except urllib.error.HTTPError as e:
+        if e.code == 404:  # o GitHub responde 404 enquanto não existe nenhuma release
+            return dict(current=current, latest="", newer=False, notes="", page_url="")
+        return dict(current=current, error=f"não consegui consultar as atualizações: HTTP {e.code}")
     except Exception as e:
         return dict(current=current, error=f"não consegui consultar as atualizações: {e}")
     latest = str(rel.get("tag_name", "")).lstrip("v")
