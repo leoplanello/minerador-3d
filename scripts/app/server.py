@@ -30,7 +30,7 @@ from classify import score  # noqa: E402
 import model_search  # noqa: E402
 import tools_installer  # noqa: E402
 import updater  # noqa: E402
-from store_reader import chrome_path, list_profiles, open_for_login as store_reader_open, read_store, read_store_info  # noqa: E402
+from store_reader import LOGIN_HOSTS as store_reader_hosts, chrome_path, list_profiles, open_for_login as store_reader_open, read_store, read_store_info  # noqa: E402
 
 DB = ROOT / "db" / "app.sqlite"
 STEPS = ["model", "slice", "cost", "copy", "images", "kit", "ml", "shopee", "video"]
@@ -513,8 +513,13 @@ def license_note(item):
     return f"{item.get('license') or 'licença não informada'} ({verdict}). Fonte: {item.get('source', '')}"[:500]
 
 
-def run_model_search(lid, q, profile, sites):
-    job = MODEL_JOBS[lid] = dict(status="running", results=[], notes=[], msg="Buscando no Printables…")
+def model_headless():
+    return bool(get_setting("model_headless", False))  # padrão: o navegador aparece, para você acompanhar a busca
+
+
+def run_model_search(lid, q, profile, sites, headless=None):
+    headless = model_headless() if headless is None else headless
+    job = MODEL_JOBS[lid] = dict(status="running", results=[], notes=[], msg="Buscando no Printables…", q=q, sites=sites, headless=headless)
     try:
         if "printables" in sites:
             try:
@@ -522,17 +527,45 @@ def run_model_search(lid, q, profile, sites):
             except ValueError as e:
                 job["notes"].append(str(e))
         browser = [x for x in sites if x in model_search.BROWSER_SITES]
-        if browser and profile:
-            job["msg"] = "Abrindo o Chrome para MakerWorld e Thingiverse. Se pedir verificação, resolva na janela."
+        show = ["printables"] if "printables" in sites and not headless and profile else []  # só para você ver a busca na janela
+        if (browser or show) and profile:
+            job["msg"] = ("Abrindo o Chrome" if not headless else "Buscando em segundo plano") + ". Se pedir verificação, resolva na janela."
             with browser_lock:
-                r, n = model_search.search_browser(q, profile, browser, on_captcha=lambda p, kind="captcha": popup(*MANUAL[kind]) if p else None)
+                r, n = model_search.search_browser(q, profile, show + browser, on_captcha=lambda p, kind="captcha": popup(*MANUAL[kind]) if p else None, headless=headless)
             job["results"] += r
             job["notes"] += n
         elif browser:
             job["notes"].append("MakerWorld e Thingiverse precisam de um perfil do Chrome escolhido no topo da tela")
+        if not job["results"] and not job["notes"]:
+            job["notes"].append("nenhum modelo achado; os sites estão em inglês, use “Sugerir termos”")
         job.update(status="done", msg=f"{len(job['results'])} modelos encontrados")
     except Exception as e:
         job.update(status="error", msg=str(e)[:300])
+    put_setting(f"msearch:{lid}", {k: job.get(k) for k in ("q", "sites", "headless", "results", "notes", "msg")} | dict(at=datetime.now().isoformat(timespec="seconds")))
+
+
+def suggest_terms(title):
+    """Termos de busca em inglês (os sites de modelos 3D são em inglês) para o título do anúncio, pelo Claude."""
+    prompt = (f"Anúncio de um produto: «{title[:150]}». Dê 6 termos curtos de busca, em inglês, para achar o modelo 3D imprimível desse produto "
+              "no Printables ou MakerWorld (2 a 4 palavras cada, do mais provável ao mais amplo). Responda só com os termos, um por linha, sem numeração.")
+    r = subprocess.run([texto._cmd(), "-p"], input=prompt, capture_output=True, text=True, timeout=120, encoding="utf-8")
+    if r.returncode:
+        raise ValueError("o Claude retornou erro: " + (r.stderr or r.stdout)[:200])
+    out = [re.sub(r"^[\-*\d.)\s]+", "", x).strip() for x in r.stdout.splitlines()]
+    return [x for x in out if 2 <= len(x) <= 50][:6]
+
+
+def open_url(url, profile=None):
+    """Abre um link no navegador padrão, ou no Chrome do perfil do app. Só sites que o app usa."""
+    u = urlparse(url)
+    if u.scheme != "https" or not any((u.hostname or "") == h or (u.hostname or "").endswith("." + h)
+                                      for h in store_reader_hosts + ("github.com",)):
+        raise ValueError("só abro links de Mercado Livre, MakerWorld, Printables, Thingiverse e GitHub")
+    if profile:
+        store_reader_open(profile, url)
+    else:
+        import webbrowser
+        webbrowser.open(url)
 
 
 def get_printables_model(lid, model_id, file_id, title, url, license_name, info=None):
@@ -544,9 +577,10 @@ def get_printables_model(lid, model_id, file_id, title, url, license_name, info=
 
 
 def model_info(d):
-    """Dados do modelo escolhido que a tela mostra: imagem (só https), autor e números da página."""
+    """Dados do modelo escolhido que a tela mostra: imagem (só https), autor, números da página e o que foi buscado."""
     thumb = str(d.get("thumb", ""))
-    return dict(thumb=thumb if thumb.startswith("https://") else "", author=str(d.get("author", ""))[:80],
+    return dict(thumb=thumb if thumb.startswith("https://") else "", author=str(d.get("author", ""))[:80], query=str(d.get("q", ""))[:100],
+                file_size=d.get("file_size") if isinstance(d.get("file_size"), int) else None, model_id=str(d.get("model_id", ""))[:20],
                 downloads=d.get("downloads") if isinstance(d.get("downloads"), int) else None, likes=d.get("likes") if isinstance(d.get("likes"), int) else None)
 
 
@@ -741,7 +775,7 @@ def candidates():
             target = (json.loads(cprice["data"]).get("price") if cprice else None) or l["price"]
             margin = {ch: custos.calc(cc, sl["minutes"], sl["grams"], target, ch) for ch in ("ml", "shopee")} if sl and target else None
             rows.append(dict(l) | dict(sold=last["sold"], reviews=last["reviews"], growth=growth, snapshots=len(snaps),
-                                      sold_growth=last["sold"] - first["sold"], since=first["ts"], last_seen=last["ts"], model=dict(model) | dict(info=json.loads(model["info"] or "{}")) if model else None, slice_file=(sl_file["file_path"] if (sl_file := c.execute("SELECT file_path FROM slices WHERE listing_id=?", (l["id"],)).fetchone()) else ""), slice=dict(sl) if sl else None, margin=margin, target_price=target,
+                                      sold_growth=last["sold"] - first["sold"], since=first["ts"], last_seen=last["ts"], model=dict(model) | dict(info=json.loads(model["info"] or "{}")) if model else None, msearch=get_setting(f"msearch:{l['id']}"), slice_file=(sl_file["file_path"] if (sl_file := c.execute("SELECT file_path FROM slices WHERE listing_id=?", (l["id"],)).fetchone()) else ""), slice=dict(sl) if sl else None, margin=margin, target_price=target,
                                       kit=dict(kit) | {k: json.loads(kit[k]) for k in ("bullets", "scripts", "keywords")} if kit else None,
                                       copy_msg=json.loads(cpmsg["data"]).get("msg", "") if cpmsg else "",
                                       publications=pubs, auto=AUTO.get(l["id"]), step_times=step_times, video_msg=json.loads(vmsg["data"]).get("msg", "") if vmsg else "",
@@ -987,7 +1021,8 @@ class H(BaseHTTPRequestHandler):
             return
         if path == "/api/model/search":
             q = parse_qs(url.query)
-            return self._json(MODEL_JOBS.get(int(q.get("id", ["0"])[0]), dict(status="idle", results=[], notes=[], msg="")))
+            lid = int(q.get("id", ["0"])[0])
+            return self._json(dict(MODEL_JOBS.get(lid) or dict(get_setting(f"msearch:{lid}") or dict(results=[], notes=[], msg=""), status="idle"), headless=model_headless()))
         if path == "/api/model/files":
             try:
                 return self._json(model_search.printables_files(parse_qs(url.query).get("model_id", [""])[0]))
@@ -1105,6 +1140,8 @@ class H(BaseHTTPRequestHandler):
                     q = re.sub(r"\s+", " ", str(data.get("q", ""))).strip()[:100]
                     if len(q) < 2 or not sites:
                         raise ValueError("digite o que buscar")
+                    if "headless" in data:
+                        put_setting("model_headless", bool(data["headless"]))
                     threading.Thread(target=run_model_search, args=(lid, q, profile, sites), daemon=True).start()
                 elif path == "/api/model/get":
                     get_printables_model(lid, str(data["model_id"]), str(data["file_id"]), str(data.get("title", "")), str(data.get("url", "")), str(data.get("license", "")), model_info(data))
@@ -1171,6 +1208,18 @@ class H(BaseHTTPRequestHandler):
                 return self._json(dict(error="já tem um download em andamento"), 400)
             threading.Thread(target=run_tool_install, args=(name,), daemon=True).start()
             return self._json(dict(ok=True))
+        if path == "/api/open":
+            try:
+                profile = data.get("profile") if data.get("profile") in list_profiles() else None
+                open_url(str(data.get("url", "")), profile if data.get("chrome") else None)
+            except ValueError as e:
+                return self._json(dict(error=str(e)), 400)
+            return self._json(dict(ok=True))
+        if path == "/api/model/suggest":
+            try:
+                return self._json(dict(terms=suggest_terms(str(data.get("title", "")))))
+            except Exception as e:
+                return self._json(dict(error=str(e)[:200]), 400)
         if path == "/api/restart":
             threading.Timer(0.5, run_restart).start()  # responde antes de fechar
             return self._json(dict(ok=True))

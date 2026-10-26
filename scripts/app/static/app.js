@@ -177,6 +177,7 @@ const VIEWS = {
   produto: {
     // o cabeçalho é refeito a cada atualização; o card do modelo é montado uma vez para não apagar o que você digita
     mount: () => `<div id="prod"></div>
+      <div class="card" id="ovcard" hidden></div>
       <div class="card" id="tlcard" hidden><div class="card-h"><h2>Linha do tempo</h2><span class="small mut">cada etapa, quando rodou e quanto levou</span></div><div id="tline"></div></div>
       <div class="card" id="mcard" hidden><div class="card-h"><h2>Modelo 3D</h2><span id="mchip" class="chip"></span></div>
         <p id="mstate" class="small mut" style="margin:0 0 12px"></p>
@@ -185,6 +186,9 @@ const VIEWS = {
           <div class="row small mut" style="margin:6px 0"><label><input type="checkbox" data-msite="printables" checked> Printables</label>
             <label><input type="checkbox" data-msite="makerworld" checked> MakerWorld</label><label><input type="checkbox" data-msite="thingiverse" checked> Thingiverse</label>
             <span>(MakerWorld e Thingiverse abrem o Chrome do perfil escolhido no topo)</span></div>
+          <div class="row small" style="margin:6px 0"><label class="chk"><input type="checkbox" id="mshow" checked> Mostrar o navegador durante a busca</label>
+            <span class="mut">Desligado, o Chrome roda escondido (headless). Ligado, você acompanha a busca na janela e resolve verificações. Precisa de um perfil escolhido no topo.</span></div>
+          <div class="row small" style="margin:6px 0"><button id="mterms" class="sm ghost">Sugerir termos em inglês</button><span id="mchips" class="chips"></span></div>
           <p id="msmsg" class="small mut" style="margin:4px 0"></p><div id="msres" class="mres"></div></div>
         <div class="form">
           <label>Link do modelo (MakerWorld, Printables…)<input id="mlink" type="url" placeholder="https://makerworld.com/..."></label>
@@ -246,16 +250,20 @@ const VIEWS = {
       const mlargs = () => ({id: id(), category_id: (document.querySelector('[name=mlcat]:checked') || {}).value,
         attributes: Object.fromEntries([...document.querySelectorAll('[data-attr]')].map(i => [i.dataset.attr, i.value])), quantity: $('mlqty').value});
       const sites = () => [...document.querySelectorAll('[data-msite]')].filter(x => x.checked).map(x => x.dataset.msite);
-      $('msgo').onclick = async () => { const r = await post('/api/model/search', {id: id(), q: $('msq').value, profile: $('profile').value, sites: sites()});
+      $('msgo').onclick = async () => { const r = await post('/api/model/search', {id: id(), q: $('msq').value, profile: $('profile').value, sites: sites(), headless: !$('mshow').checked});
         if (r.error) return toast(r.error); pollModel(id()); };
+      $('mterms').onclick = async () => { const c = S.candidates.find(x => String(x.id) === route[1]); $('mterms').disabled = true; $('mchips').textContent = 'Pensando…';
+        const r = await post('/api/model/suggest', {title: c.title}); $('mterms').disabled = false;
+        $('mchips').innerHTML = r.error ? esc(r.error) : r.terms.map(t => `<button class="sm ghost" data-term="${esc(t)}">${esc(t)}</button>`).join(''); };
+      $('mchips').onclick = e => { const b = e.target.closest('[data-term]'); if (b) { $('msq').value = b.dataset.term; $('msgo').click(); } };
       $('msres').onclick = async e => {
         const f = e.target.closest('[data-mfile]'), g = e.target.closest('[data-mpick]'); const job = MJOB.results || [];
-        if (f) { const it = job[+f.dataset.i]; const r = await post('/api/model/get', {id: id(), model_id: it.id, file_id: f.dataset.mfile, title: it.title, url: it.url, license: it.license, thumb: it.thumb, author: it.author, downloads: it.downloads, likes: it.likes});
+        if (f) { const it = job[+f.dataset.i]; const r = await post('/api/model/get', {id: id(), model_id: it.id, file_id: f.dataset.mfile, title: it.title, url: it.url, license: it.license, thumb: it.thumb, author: it.author, downloads: it.downloads, likes: it.likes, q: MJOB.q || $('msq').value, file_size: +f.dataset.fsize || null});
           toast(r.error || 'Modelo baixado e guardado'); load(); return; }
         if (g) { const it = job[+g.dataset.mpick];
           if (it.source === 'printables') { const box = $('mf' + g.dataset.mpick); box.textContent = 'Carregando arquivos…';
             const fl = await (await fetch('/api/model/files?model_id=' + it.id)).json();
-            box.innerHTML = fl.error ? esc(fl.error) : fl.length ? fl.map(x => `<div class="row small"><span class="grow">${esc(x.name)} · ${x.size ? Math.round(x.size / 1024).toLocaleString('pt-BR') + ' KB' : ''}</span><button class="sm pri" data-mfile="${esc(x.id)}" data-i="${g.dataset.mpick}">Usar este arquivo</button></div>`).join('') : 'Esse modelo não tem arquivo .stl; abra a página e baixe o .3mf.';
+            box.innerHTML = fl.error ? esc(fl.error) : fl.length ? fl.map(x => `<div class="row small"><span class="grow">${esc(x.name)} · ${x.size ? Math.round(x.size / 1024).toLocaleString('pt-BR') + ' KB' : ''}</span><button class="sm pri" data-mfile="${esc(x.id)}" data-fsize="${x.size || ''}" data-i="${g.dataset.mpick}">Usar este arquivo</button></div>`).join('') : 'Esse modelo não tem arquivo .stl; abra a página e baixe o .3mf.';
             return; }
           const r = await post('/api/model/capture', {id: id(), url: it.url, profile: $('profile').value, license: it.license, source: it.source});
           toast(r.error || 'Chrome aberto: clique em Baixar na página do modelo'); if (!r.error) pollModel(id()); } };
@@ -277,8 +285,11 @@ const VIEWS = {
         toast(r.error ? 'Não publicou: ' + r.error : 'Publicado no Mercado Livre'); load(); };
       $('kok').onclick = async () => { const r = await post('/api/kit/confirm', {id: id()}); toast(r.error || 'Kit confirmado'); load(); };
       document.querySelectorAll('[data-pv]').forEach(b => b.onclick = () => { pv = b.dataset.pv; document.querySelectorAll('[data-pv]').forEach(x => x.setAttribute('aria-pressed', x === b)); update(); });
-      $('icfg').innerHTML = cfgHtml('i', IMG_FIELDS) + '<fieldset class="views"><legend>Vistas (cada uma vira uma imagem)</legend><div id="iviews"></div></fieldset>';
-      $('vcfg').innerHTML = cfgHtml('v', VID_FIELDS);
+      $('icfg').innerHTML = presetBar('i', IMG_PRESETS) + cfgHtml('i', IMG_FIELDS) + '<fieldset class="views"><legend>Vistas (cada uma vira uma imagem)</legend><div id="iviews"></div></fieldset>';
+      $('vcfg').innerHTML = presetBar('v', VID_PRESETS) + cfgHtml('v', VID_FIELDS);
+      const applyPreset = (pre, fields, list, e) => { const b = e.target.closest(`[data-${pre}preset]`); if (!b) return; const p = list.find(x => x.k === b.dataset[pre + 'preset']);
+        cfgFill(pre, fields, {...cfgRead(pre, fields), ...p.c}); if (p.c.views) document.querySelectorAll('[data-iview]').forEach(x => x.checked = p.c.views.includes(x.dataset.iview)); toast('Sugestão aplicada: ' + p.l + '. Clique em Gerar para usar.'); };
+      $('icfg').onclick = e => applyPreset('i', IMG_FIELDS, IMG_PRESETS, e); $('vcfg').onclick = e => applyPreset('v', VID_FIELDS, VID_PRESETS, e);
       fetch('/api/media/config').then(r => r.json()).then(m => {
         $('iviews').innerHTML = Object.entries(m.options.views).map(([k, l]) => `<label class="chk"><input type="checkbox" data-iview="${k}"> ${esc(l)}</label>`).join('');
         cfgFill('i', IMG_FIELDS, m.render); cfgFill('v', VID_FIELDS, m.video);
@@ -321,6 +332,7 @@ const VIEWS = {
            <div class="stepper">${stepper(c)}</div>
            ${(() => { const [t, d, a, k] = nextAction(c); return `<div class="next ${k || ''}"><div class="grow"><b>${esc(t)}</b><div class="small">${esc(d)}</div></div>${a === 'auto' ? `<button class="pri" data-auto="${c.id}">${ic('refresh')}Rodar etapas automáticas</button>` : ''}</div>`; })()}</div>`;
       if (!c) return;
+      $('ovcard').hidden = false; $('ovcard').innerHTML = overview(c);
       $('tlcard').hidden = false;
       const msgs = {slice: c.slice_msg, copy: c.copy_msg, images: c.images_msg, video: c.video_msg, shopee: ''};
       $('tline').innerHTML = `<ol class="tl">${S.steps.map(n => { const st = c.steps[n] || 'pending', t = (c.step_times || {})[n] || {}, own = c.publications[n];
@@ -456,6 +468,47 @@ function stepDetail(c, n) {
     + kv([['Resultado', c.video_msg], ['Voz', c.has_voice ? 'enviada' : 'sem voz'], ['Música', c.has_music ? 'enviada' : 'sem música']]) + when;
   const p = pub[n]; return kv([['Anúncio publicado', p ? link(p.url, p.url || p.external_id) : 'ainda não publicado', 1], ['Código', p && p.external_id]]) + when;
 }
+// avisos do produto: tudo o que merece atenção antes de publicar de verdade (no teste do app, só informam)
+function warnings(c) {
+  const w = [], m = c.model || {}, sl = c.slice, M = c.margin;
+  if (!m.file_path) w.push(['Sem modelo 3D', 'Busque e escolha um modelo no cartão “Modelo 3D” abaixo.']);
+  if (m.license_note && /NÃO permite uso comercial/.test(m.license_note)) w.push(['A licença do modelo não permite uso comercial', 'Para vender, troque por um modelo com licença comercial ou peça permissão ao autor.']);
+  else if (m.file_path && m.license_note && /licença não informada|confira o uso/.test(m.license_note)) w.push(['Confira a licença do modelo', 'A página do modelo não deixou claro se o uso comercial é permitido.']);
+  if (sl && sl.minutes > 240) w.push(['A impressão passa de 4 h', `Está em ${mdur(sl.minutes)}. O plano pede até 4 h por peça; peças longas travam a impressora e encarecem o produto.`]);
+  if (sl && sl.grams > 120) w.push(['O filamento passa de 120 g', `Está em ${sl.grams.toLocaleString('pt-BR')} g, acima do limite do plano.`]);
+  if (M && M.ml.lucro < 0) w.push(['No preço atual cada peça dá prejuízo', `Preço ${brl(c.target_price)}, lucro ${brl(M.ml.lucro)} por peça no Mercado Livre. Preço mínimo para a margem alvo: ${M.ml.preco_minimo ? brl(M.ml.preco_minimo) : '—'}. Sem problema para testar o app; ajuste antes de publicar de verdade.`]);
+  else if (M && M.ml.preco_minimo && c.target_price < M.ml.preco_minimo) w.push(['Margem abaixo da meta', `Preço mínimo para a margem alvo: ${brl(M.ml.preco_minimo)}.`]);
+  if (M && !c.costs_confirmed) w.push(['Custos provisórios', 'Os custos usados são estimativas. Confirme em Configurações para a margem valer.']);
+  if (c.images.length && c.steps.images === 'ok') w.push(['As imagens são renders, não fotos da peça', 'O Mercado Livre pede foto fiel ao produto; troque por uma foto real depois da primeira peça impressa.']);
+  return w;
+}
+// o produto de relance: anúncio de origem, modelo escolhido (exatamente qual), números e texto
+function overview(c) {
+  const m = c.model || {}, mi = m.info || {}, sl = c.slice, M = c.margin, k = c.kit, ms = c.msearch || {};
+  const btn = (u, t, chrome) => `<button class="sm ghost" data-open="${esc(u)}" ${chrome ? 'data-chrome="1"' : ''}>${t}</button>`;
+  const ws = warnings(c);
+  return `${ws.length ? `<div class="warns">${ws.map(([t, d]) => `<div class="warn"><b>${esc(t)}</b><span>${esc(d)}</span></div>`).join('')}</div>` : ''}
+  <div class="ov">
+    <section><h3>Anúncio de origem</h3>${img(c)}<b class="ovt">${esc(c.title)}</b>
+      <div class="small mut">${esc(c.store_name || '')}${c.material ? ' · ' + esc(c.material.replace(/^[:\s]+/, '')) : ''}</div>
+      <div class="small">${price(c.price)} · +${num(c.sold)} vendidos · ${num(c.reviews)} avaliações</div>
+      <div class="row">${btn(c.url, 'Abrir no navegador')}${btn(c.url, 'Abrir no Chrome do app', 1)}</div></section>
+    <section><h3>Modelo 3D</h3>${m.file_path ? `${mi.thumb ? `<img class="thumb big" src="${esc(mi.thumb)}" alt="" referrerpolicy="no-referrer">` : '<div class="thumb big"></div>'}
+      <b class="ovt">${esc(mi.title || m.file_path.split('/').pop())}</b>
+      <div class="small mut">${[mi.source, mi.author && 'por ' + mi.author, mi.downloads != null && num(mi.downloads) + ' downloads', mi.likes != null && num(mi.likes) + ' curtidas'].filter(Boolean).map(esc).join(' · ')}</div>
+      <div class="small">Arquivo: <b>${esc(mi.file || m.file_path.split('/').pop())}</b>${mi.file_size ? ' · ' + Math.round(mi.file_size / 1024).toLocaleString('pt-BR') + ' KB' : ''}</div>
+      ${mi.query ? `<div class="small mut">Buscado como “${esc(mi.query)}”</div>` : ''}
+      <div class="small">${esc(m.license_note || 'Licença não anotada')}</div>
+      <div class="row">${m.source_url ? btn(m.source_url, 'Abrir página do modelo') + btn(m.source_url, 'No Chrome do app', 1) : ''}<button class="sm pri" data-swap>Trocar modelo</button></div>`
+      : `<div class="small mut">Nenhum modelo escolhido ainda.</div><div class="row"><button class="sm pri" data-swap>Buscar modelo</button></div>`}
+      ${ms.q ? `<div class="small mut">Última busca: “${esc(ms.q)}”, ${(ms.results || []).length} resultados${ms.at ? ' em ' + localTime(String(ms.at).replace('T', ' ')) : ''}</div>` : ''}</section>
+    <section><h3>Impressão e custo</h3>${sl ? kv([['Tempo', mdur(sl.minutes)], ['Filamento', sl.grams.toLocaleString('pt-BR', {minimumFractionDigits: 1}) + ' g'], ['Preço-alvo', brl(c.target_price)],
+      ['Lucro (ML)', M ? `<b style="color:${M.ml.lucro > 0 ? 'var(--green)' : 'var(--red)'}">${brl(M.ml.lucro)} (${pct(M.ml.margem_pct)})</b>` : '', 1], ['Lucro (Shopee)', M ? `${brl(M.shopee.lucro)} (${pct(M.shopee.margem_pct)})` : '']]) : '<div class="small mut">Ainda não fatiado.</div>'}</section>
+    <section><h3>Texto do anúncio</h3>${k ? `<b class="ovt">${esc(k.title)}</b><div class="small ovd">${esc(k.description).replace(/\n+/g, '<br>')}</div>
+      <ul class="small">${k.bullets.map(b => `<li>${esc(b)}</li>`).join('')}</ul>` : '<div class="small mut">Texto ainda não gerado.</div>'}
+      ${c.images.length ? `<div class="gal">${c.images.slice(0, 4).map(n => `<a href="/products/${c.id}/renders/${n}" target="_blank"><img src="/products/${c.id}/renders/${n}" alt="" loading="lazy"></a>`).join('')}</div>` : ''}</section>
+  </div>`;
+}
 const stepper = c => S.steps.map(n => { const s = c.steps[n] || 'pending';
   return `<div class="st ${esc(s)}" title="${STATUS_LABEL[s] || s}">${STEP_LABEL[n] || n}</div>`; }).join('');
 
@@ -477,6 +530,8 @@ const IMG_FIELDS = [
   {k:'light', l:'Iluminação', t:'select', o:{soft:'Suave', normal:'Normal', strong:'Forte'}},
   {k:'quality', l:'Qualidade', t:'select', o:{rapido:'Rápida (cerca de 1 min)', normal:'Normal', alta:'Alta (demora mais)'}},
   {k:'size', l:'Tamanho da imagem (px)', t:'number', min:600, max:2400, step:100},
+  {k:'fill', l:'Enquadramento', t:'select', o:{perto:'Perto (peça grande)', medio:'Médio', longe:'Longe'}},
+  {k:'turn', l:'Giro da peça (graus)', t:'number', min:0, max:345, step:15},
   {k:'shadow', l:'Sombra no chão', t:'check'}];
 const VID_FIELDS = [
   {k:'format', l:'Formato', t:'select', o:{'9:16':'Vertical 9:16 (Reels, TikTok, Shopee)', '1:1':'Quadrado 1:1', '16:9':'Horizontal 16:9'}},
@@ -490,11 +545,34 @@ const VID_FIELDS = [
   {k:'caption_box', l:'Caixa escura atrás da legenda', t:'check'},
   {k:'background', l:'Cor de fundo', t:'color'},
   {k:'music', l:'Usar a música de fundo enviada', t:'check'},
-  {k:'music_volume', l:'Volume da música (0 a 1)', t:'number', min:0, max:1, step:0.05}];
-const cfgHtml = (pre, fields) => fields.map(f => `<label class="${f.t === 'check' ? 'chk' : ''}">${f.t === 'check' ? '' : esc(f.l)}${
+  {k:'music_volume', l:'Volume da música (0 a 1)', t:'number', min:0, max:1, step:0.05},
+  {k:'fps', l:'Quadros por segundo', t:'select', o:{24:'24 (cinema)', 30:'30 (padrão)', 60:'60 (fluido)'}},
+  {k:'quality', l:'Qualidade do arquivo', t:'select', o:{rapido:'Rápida (arquivo menor)', normal:'Normal', alta:'Alta (maior)'}}];
+
+const HINTS = {
+  color: 'Combine com a cor que você tem em estoque; cinza e preto fotografam melhor.', finish: 'Fosco esconde as camadas; brilhante realça o volume.',
+  background: 'Branco puro é o que o Mercado Livre exige na foto principal.', light: 'Suave evita brilho estourado em peças claras.',
+  quality: 'Use Rápida para testar o enquadramento e Alta só no final.', size: '1200 px é suficiente para o Mercado Livre (mínimo 500).',
+  shadow: 'A sombra no chão faz a peça parecer apoiada, não flutuando.', fill: 'Perto faz a peça ocupar mais da imagem.', turn: 'Gira a peça em volta do eixo vertical, para mostrar o lado mais bonito.',
+  format: '9:16 serve para Reels, TikTok e Shopee Vídeo.', seconds: '3 a 4 s por imagem mantém o ritmo.', transition: 'Esmaecer suaviza a troca entre imagens.',
+  zoom: 'Um zoom lento prende mais a atenção.', captions: 'A maioria assiste sem som: deixe a legenda ligada.', caption_size: '50 a 60 lê bem no celular.',
+  caption_pos: 'Embaixo evita cobrir a peça.', caption_color: 'Escuro no fundo claro; claro com a caixa escura.', caption_box: 'A caixa dá leitura em qualquer fundo.',
+  background_v: '', music: 'Envie uma música livre de direitos antes.', music_volume: '0,15 a 0,3 deixa a voz clara.', fps: '30 é o padrão; 24 dá aspecto de cinema e arquivo menor.', quality_v: 'Alta gera arquivo maior.'};
+const IMG_PRESETS = [
+  {k:'ml', l:'Mercado Livre (foto principal)', d:'Fundo branco puro, peça perto, luz normal: o padrão que o ML aceita.', c:{background:'white', finish:'matte', light:'normal', fill:'perto', shadow:true, quality:'normal', turn:0, views:['frente','lado','cima','tras']}},
+  {k:'vitrine', l:'Vitrine (cinza suave)', d:'Fundo cinza claro e luz suave, 4 vistas. Bom para o carrossel.', c:{background:'gray', finish:'matte', light:'soft', fill:'medio', shadow:true, quality:'normal', turn:0, views:['frente','lado','cima','tras']}},
+  {k:'destaque', l:'Destaque (brilho e detalhe)', d:'Acabamento seda, luz forte e um detalhe em zoom. Chama atenção no feed.', c:{background:'warm', finish:'silk', light:'strong', fill:'perto', shadow:true, quality:'alta', turn:0, views:['frente','detalhe','topo']}},
+  {k:'teste', l:'Teste rápido', d:'Qualidade rápida e 2 vistas, para conferir o enquadramento em cerca de 1 min.', c:{quality:'rapido', size:800, views:['frente','topo']}}];
+const VID_PRESETS = [
+  {k:'reels', l:'Reels / TikTok', d:'Vertical, 3 s por imagem, esmaecer, zoom lento e legenda grande com caixa.', c:{format:'9:16', seconds:3, transition:'fade', zoom:true, captions:true, caption_size:60, caption_box:true, fps:30, quality:'normal'}},
+  {k:'shopee', l:'Shopee Vídeo', d:'Vertical, 4 s por imagem, corte seco e legenda simples.', c:{format:'9:16', seconds:4, transition:'none', zoom:false, captions:true, caption_size:52, caption_box:false, fps:30, quality:'normal'}},
+  {k:'feed', l:'Feed quadrado', d:'1:1, 3 s por imagem e zoom lento.', c:{format:'1:1', seconds:3, transition:'fade', zoom:true, captions:true, caption_size:48, fps:30, quality:'normal'}},
+  {k:'rapido', l:'Teste rápido', d:'Qualidade rápida e 24 fps para gerar em poucos segundos.', c:{seconds:2, fps:24, quality:'rapido', zoom:false}}];
+const presetBar = (pre, list) => `<div class="presets"><span class="small mut">Sugestões:</span> ${list.map(p => `<button type="button" class="sm ghost" data-${pre}preset="${p.k}" title="${esc(p.d)}">${esc(p.l)}</button>`).join('')}</div>`;
+const cfgHtml = (pre, fields) => fields.map(f => `<label class="${f.t === 'check' ? 'chk' : ''}" title="${esc(HINTS[f.k === 'quality' && pre === 'v' ? 'quality_v' : f.k] || '')}">${f.t === 'check' ? '' : esc(f.l)}${
   f.t === 'select' ? `<select data-${pre}="${f.k}">${Object.entries(f.o).map(([v, t]) => `<option value="${esc(v)}">${esc(t)}</option>`).join('')}</select>`
   : f.t === 'check' ? `<input type="checkbox" data-${pre}="${f.k}"> ${esc(f.l)}`
-  : `<input type="${f.t}" data-${pre}="${f.k}" ${f.min != null ? `min="${f.min}" max="${f.max}" step="${f.step}"` : ''}>`}</label>`).join('');
+  : `<input type="${f.t}" data-${pre}="${f.k}" ${f.min != null ? `min="${f.min}" max="${f.max}" step="${f.step}"` : ''}>`}<small class="hint">${esc(HINTS[f.k === 'quality' && pre === 'v' ? 'quality_v' : f.k] || '')}</small></label>`).join('');
 const cfgFill = (pre, fields, v) => fields.forEach(f => { const el = document.querySelector(`[data-${pre}="${f.k}"]`); if (el) f.t === 'check' ? el.checked = !!v[f.k] : el.value = v[f.k]; });
 const cfgRead = (pre, fields) => Object.fromEntries(fields.map(f => { const el = document.querySelector(`[data-${pre}="${f.k}"]`);
   return [f.k, f.t === 'check' ? el.checked : f.t === 'number' ? +el.value : el.value]; }));
@@ -504,8 +582,11 @@ async function pollModel(lid) {
   const draw = () => { const m = $('msmsg'); if (!m) return;
     m.textContent = (MJOB.msg || '') + (MJOB.notes && MJOB.notes.length ? ' · ' + MJOB.notes.join(' · ') : '');
     const SRC = {printables:'Printables', makerworld:'MakerWorld', thingiverse:'Thingiverse'};
-    $('msres').innerHTML = (MJOB.results || []).map((r, i) => `<div class="mr"><img class="thumb" src="${esc(r.thumb)}" alt="" loading="lazy" referrerpolicy="no-referrer">
-      <div class="grow"><a class="title wrap" href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.title)}</a>
+    const cur = (S.candidates.find(x => String(x.id) === String(route[1])) || {}).model || {};
+    if (!$('mshow').dataset.init && MJOB.headless != null) { $('mshow').checked = !MJOB.headless; $('mshow').dataset.init = 1; }
+    if (MJOB.q && !$('msq').dataset.q) { $('msq').dataset.q = 1; $('msq').value = MJOB.q; }
+    $('msres').innerHTML = (MJOB.q && (MJOB.results || []).length ? `<div class="small mut" style="margin:4px 0">Resultados de “${esc(MJOB.q)}”${MJOB.headless ? ' (navegador oculto)' : ' (navegador visível)'}. Escolha outro para trocar o modelo.</div>` : '') + (MJOB.results || []).map((r, i) => `<div class="mr ${cur.source_url && r.url === cur.source_url ? 'cur' : ''}"><img class="thumb" src="${esc(r.thumb)}" alt="" loading="lazy" referrerpolicy="no-referrer">
+      <div class="grow"><a class="title wrap" href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.title)}</a>${cur.source_url && r.url === cur.source_url ? ' <span class="chip ok">Em uso</span>' : ''} <button class="sm ghost" data-open="${esc(r.url)}">Abrir</button>
         <div class="meta"><span class="chip">${SRC[r.source] || esc(r.source)}</span>${r.author ? `<span>${esc(r.author)}</span>` : ''}${r.downloads != null ? `<span><b>${num(r.downloads)}</b> downloads</span>` : ''}
           ${r.license ? `<span class="chip ${r.commercial === false ? 'error' : r.commercial ? 'ok' : ''}" title="${esc(r.license)}">${r.commercial === false ? 'Sem uso comercial' : r.commercial ? 'Uso comercial ok' : 'Veja a licença'}</span>` : ''}</div>
         <div id="mf${i}" class="small"></div></div>
@@ -624,3 +705,13 @@ $('restart').onclick = async () => {
   if (u.frozen && u.newer) return checkUpdate();
   waitRestart();
 };
+
+// links externos: o WebView do app não abre janelas novas, então o app abre no navegador padrão (ou no Chrome do perfil)
+document.body.addEventListener('click', async e => {
+  const b = e.target.closest('[data-open]'), a = e.target.closest('a[target=_blank][href^="http"]'), sw = e.target.closest('[data-swap]');
+  if (sw) { const m = $('mcard'); m.scrollIntoView({behavior: 'smooth', block: 'start'}); $('msq').focus(); return; }
+  const url = b ? b.dataset.open : a && a.href; if (!url) return;
+  e.preventDefault();
+  const r = await post('/api/open', {url, chrome: !!(b && b.dataset.chrome), profile: $('profile').value});
+  if (r.error) { toast(r.error); if (!b || !b.dataset.chrome) window.open(url, '_blank'); }
+});

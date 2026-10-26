@@ -69,3 +69,11 @@ def test_video_real_com_voz_e_musica(tmp_path):
     assert 3.6 < video.duration(out) < 4.6
     solo = video.make_video(imgs, "Oi.", tmp_path / "m.mp4", None, cfg=dict(music=True, seconds=3), music=mus)  # só música, sem voz
     assert 5.5 < video.duration(solo) < 6.6
+
+
+def test_fps_e_qualidade():
+    cfg = video.clean_video_cfg({"fps": "24", "quality": "alta"})
+    assert cfg["fps"] == 24 and cfg["quality"] == "alta" and video.clean_video_cfg({})["fps"] == 30
+    for bad in ({"fps": 25}, {"quality": "x"}):
+        with pytest.raises(ValueError):
+            video.clean_video_cfg(bad)

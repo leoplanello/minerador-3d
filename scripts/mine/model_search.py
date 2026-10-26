@@ -118,17 +118,22 @@ ANCHORS_JS = """els => els.map(a => { const i = a.querySelector('img'); return {
   alt: i ? (i.alt || '') : '', img: i ? (i.currentSrc || i.src || '') : ''}; })"""
 
 
-def search_browser(q, profile, sites, limit=8, on_captcha=lambda paused, kind="captcha": None):
-    """Uma sessão do Chrome do perfil salvo para os sites que exigem navegador. Devolve (resultados, avisos)."""
+def search_browser(q, profile, sites, limit=8, on_captcha=lambda paused, kind="captcha": None, headless=False):
+    """Uma sessão do Chrome do perfil salvo para os sites que exigem navegador. Devolve (resultados, avisos).
+    "printables" em sites só mostra a página de busca na janela (os resultados dele vêm da API); com headless=False a janela fica à vista."""
     if profile not in list_profiles():
         raise ValueError(f"perfil desconhecido: {profile}")
     results, notes = [], []
     with sync_playwright() as p:
-        ctx = launch_ctx(p, profile)
+        ctx = launch_ctx(p, profile, headless=headless)
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
         try:
             for site in sites:
                 try:
+                    if site == "printables":
+                        page.goto("https://www.printables.com/search/models?q=" + urllib.parse.quote(q), wait_until="domcontentloaded", timeout=45000)
+                        page.wait_for_timeout(4000)
+                        continue
                     page.goto(BROWSER_SITES[site]["search"].format(q=urllib.parse.quote(q)), wait_until="domcontentloaded", timeout=45000)
                     if "just a moment" in page.title().lower() or _captcha(page):  # verificação do Cloudflare: a pessoa resolve na janela
                         _wait_human(page, on_captcha)

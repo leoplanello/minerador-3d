@@ -22,9 +22,9 @@ CAPTCHA_HINTS = ("captcha", "account-verification", "negative_traffic", "/login"
 CAPTCHA_TEXTS = ("não sou um robô", "por segurança, complete esta etapa")
 
 
-def launch_ctx(p, profile, **kw):
+def launch_ctx(p, profile, headless=False, **kw):
     """Chrome do perfil salvo para o Playwright. Sem a marca de automação, que faz o Google e o Cloudflare recusarem o login."""
-    return p.chromium.launch_persistent_context(str(PROFILES_DIR / profile), channel="chrome", headless=False,
+    return p.chromium.launch_persistent_context(str(PROFILES_DIR / profile), channel="chrome", headless=headless,
                                                 ignore_default_args=["--enable-automation"], args=["--disable-blink-features=AutomationControlled"], **kw)
 
 

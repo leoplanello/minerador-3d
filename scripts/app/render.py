@@ -58,9 +58,10 @@ VIEWS = {"frente": (35, 28, 1.0), "lado": (125, 22, 1.0), "cima": (-50, 55, 1.0)
          "frontal": (0, 12, 1.0), "topo": (0, 88, 1.0), "perfil": (90, 5, 1.0), "detalhe": (35, 20, 0.6)}
 VIEW_LABELS = {"frente": "Frente 3/4", "lado": "Lado", "cima": "De cima", "tras": "Trás 3/4", "frontal": "Frontal", "topo": "Topo", "perfil": "Perfil", "detalhe": "Detalhe (zoom)"}
 QUALITY = {"rapido": (16, 12), "normal": (32, 24), "alta": (64, 64)}  # amostras EEVEE, Cycles
+FILL = {"perto": 2.4, "medio": 3.2, "longe": 3.8}  # distância da câmera em tamanhos da peça: quanto menor, mais a peça enche a imagem
 RENDER_DEFAULT = dict(color="#3a3a3a", finish="matte", background="white", views=["frente", "lado", "cima", "tras"], size=1200,
-                      quality="normal", light="normal", shadow=True)
-CHOICES = dict(finish=("matte", "gloss", "silk"), background=("white", "gray", "warm"), quality=tuple(QUALITY), light=("soft", "normal", "strong"))
+                      quality="normal", light="normal", shadow=True, fill="medio", turn=0)
+CHOICES = dict(finish=("matte", "gloss", "silk"), background=("white", "gray", "warm"), quality=tuple(QUALITY), light=("soft", "normal", "strong"), fill=tuple(FILL))
 
 
 def clean_render_cfg(d):
@@ -77,7 +78,10 @@ def clean_render_cfg(d):
     size = int(cfg["size"])
     if not 600 <= size <= 2400:
         raise ValueError("o tamanho da imagem deve ficar entre 600 e 2400 px")
-    return cfg | dict(views=views, size=size, shadow=bool(cfg["shadow"]))
+    turn = int(cfg["turn"])
+    if not 0 <= turn < 360:
+        raise ValueError("o giro da peça deve ficar entre 0 e 359 graus")
+    return cfg | dict(views=views, size=size, shadow=bool(cfg["shadow"]), turn=turn)
 
 
 def render_images(model, outdir, cfg=None):
@@ -90,7 +94,7 @@ def render_images(model, outdir, cfg=None):
     for old in outdir.glob("render_*.jpg"):
         old.unlink()
     with tempfile.TemporaryDirectory() as tmp:
-        scene_cfg = cfg | dict(views=[VIEWS[v] for v in cfg["views"]], samples_eevee=QUALITY[cfg["quality"]][0], samples_cycles=QUALITY[cfg["quality"]][1])
+        scene_cfg = cfg | dict(views=[VIEWS[v] for v in cfg["views"]], samples_eevee=QUALITY[cfg["quality"]][0], samples_cycles=QUALITY[cfg["quality"]][1], dist=FILL[cfg["fill"]])
         cfgfile = Path(tmp) / "cfg.json"
         cfgfile.write_text(json.dumps(scene_cfg), encoding="utf-8")
         stl = Path(model)

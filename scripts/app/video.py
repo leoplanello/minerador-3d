@@ -31,8 +31,9 @@ def refresh():
 FONT = "C\\:/Windows/Fonts/arial.ttf"  # ':' escapado para o filtro drawtext
 FORMATS = {"9:16": (1080, 1920), "1:1": (1080, 1080), "16:9": (1920, 1080)}
 VIDEO_DEFAULT = dict(format="9:16", seconds=4.0, transition="none", zoom=False, captions=True, caption_size=52, caption_pos="bottom",
-                     caption_color="#333333", caption_box=False, background="#ffffff", music=False, music_volume=0.25)
-CHOICES = dict(format=tuple(FORMATS), transition=("none", "fade"), caption_pos=("bottom", "center", "top"))
+                     caption_color="#333333", caption_box=False, background="#ffffff", music=False, music_volume=0.25, fps=30, quality="normal")
+CRF = {"rapido": 28, "normal": 23, "alta": 18}  # menor = mais nítido e maior
+CHOICES = dict(format=tuple(FORMATS), transition=("none", "fade"), caption_pos=("bottom", "center", "top"), quality=tuple(CRF))
 
 
 def clean_video_cfg(d):
@@ -51,7 +52,10 @@ def clean_video_cfg(d):
         raise ValueError("o tamanho da legenda deve ficar entre 24 e 120")
     if not 0 <= vol <= 1:
         raise ValueError("o volume da música deve ficar entre 0 e 1")
-    return cfg | dict(seconds=seconds, caption_size=size, music_volume=vol, zoom=bool(cfg["zoom"]), captions=bool(cfg["captions"]),
+    fps = int(cfg["fps"])
+    if fps not in (24, 30, 60):
+        raise ValueError("fps deve ser 24, 30 ou 60")
+    return cfg | dict(fps=fps, seconds=seconds, caption_size=size, music_volume=vol, zoom=bool(cfg["zoom"]), captions=bool(cfg["captions"]),
                       caption_box=bool(cfg["caption_box"]), music=bool(cfg["music"]))
 
 
@@ -92,10 +96,10 @@ def make_video(images, script, out, voice=None, cfg=None, music=None):
         for i, (img, cap) in enumerate(zip(images, captions(script, n, wrap))):
             if cfg["zoom"]:
                 cmd += ["-i", str(img)]
-                frames = max(2, round(per * 30))
-                base = (f"[{i}:v]scale={side * 2}:{side * 2},zoompan=z='1+0.12*on/{frames}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={frames}:s={side}x{side}:fps=30")
+                frames = max(2, round(per * cfg["fps"]))
+                base = (f"[{i}:v]scale={side * 2}:{side * 2},zoompan=z='1+0.12*on/{frames}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={frames}:s={side}x{side}:fps={cfg['fps']}")
             else:
-                cmd += ["-loop", "1", "-framerate", "30", "-t", f"{per:.2f}", "-i", str(img)]
+                cmd += ["-loop", "1", "-framerate", str(cfg["fps"]), "-t", f"{per:.2f}", "-i", str(img)]
                 base = f"[{i}:v]scale={side}:{side}"
             chain = f"{base},pad={W}:{H}:({W}-{side})/2:{img_y}:{bg}"
             if cfg["transition"] == "fade":
@@ -128,7 +132,7 @@ def make_video(images, script, out, voice=None, cfg=None, music=None):
             graph += ";" + audio[0].replace("[a0]", "[aout]").replace("[a1]", "[aout]")
             maps += ["-map", "[aout]"]
         cmd += ["-filter_complex", graph] + maps + (["-c:a", "aac"] if audio else [])
-        cmd += ["-r", "30", "-pix_fmt", "yuv420p", "-c:v", "libx264", "-t", f"{total:.2f}", str(out)]
+        cmd += ["-r", str(cfg["fps"]), "-pix_fmt", "yuv420p", "-c:v", "libx264", "-crf", str(CRF[cfg["quality"]]), "-t", f"{total:.2f}", str(out)]
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=900)
     if r.returncode or not out.exists():
         raise ValueError("o ffmpeg falhou: " + r.stderr[-300:])

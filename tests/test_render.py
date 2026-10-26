@@ -59,3 +59,11 @@ def test_render_real_com_config(tmp_path):
     assert [f.name for f in files] == ["render_1.jpg", "render_2.jpg"]
     im = Image.open(files[0])
     assert im.size == (600, 600) and max(im.getpixel((5, 5))) < 250  # fundo cinza: não foi forçado a branco
+
+
+def test_enquadramento_e_giro():
+    cfg = render.clean_render_cfg({"fill": "perto", "turn": "90"})
+    assert cfg["fill"] == "perto" and cfg["turn"] == 90 and render.clean_render_cfg({})["fill"] == "medio"
+    for bad in ({"fill": "x"}, {"turn": 360}, {"turn": -1}):
+        with pytest.raises(ValueError):
+            render.clean_render_cfg(bad)

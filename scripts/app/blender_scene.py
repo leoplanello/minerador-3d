@@ -78,8 +78,8 @@ cam = bpy.context.object
 scene.camera = cam
 cam.data.lens = 50
 for i, (az, el, zoom) in enumerate(cfg["views"], 1):
-    dist = size * 3.8 * zoom
-    a, e = math.radians(az), math.radians(el)
+    dist = size * cfg["dist"] * zoom
+    a, e = math.radians(az + cfg["turn"]), math.radians(el)
     cam.location = center + Vector((dist * math.cos(e) * math.cos(a), dist * math.cos(e) * math.sin(a), dist * math.sin(e)))
     cam.rotation_euler = (center - cam.location).to_track_quat("-Z", "Y").to_euler()
     scene.render.filepath = f"{outdir}/render_{i}.jpg"
