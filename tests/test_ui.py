@@ -73,6 +73,15 @@ def test_precos_com_virgula_e_sem_3d(gui):
         b.close()
 
 
+def _espera(page, cond, tentativas=60):
+    """A tela grava no servidor depois de mudar; espera a condição ficar verdadeira em vez de olhar no mesmo instante."""
+    for _ in range(tentativas):
+        if cond():
+            return True
+        page.wait_for_timeout(100)
+    return cond()
+
+
 def _arrastar(page, origem, destino, dx=400, dy=60, embaixo=False):
     """Arrasto em passos: o Chrome só começa o dragover depois de vários movimentos do mouse."""
     o = page.locator(origem).bounding_box()
@@ -203,7 +212,7 @@ def test_onboarding_primeira_abertura_e_tour(gui, tmp_path):
         assert "Dados da sua loja" in page.inner_text("#ob h2")
         page.click("[data-obskip]")
         page.wait_for_selector("#ob", state="hidden")
-        assert server.get_onboarding()["done"] is True
+        assert _espera(page, lambda: server.get_onboarding()["done"] is True)
         page.reload()
         page.wait_for_timeout(2000)
         assert page.locator("#ob .ob-card:visible").count() == 0  # concluído: não volta a abrir
@@ -215,7 +224,7 @@ def test_onboarding_primeira_abertura_e_tour(gui, tmp_path):
         page.click("[data-tournext]")
         page.click("[data-tournext]")
         page.wait_for_selector("#tour-tip", state="detached")
-        assert server.get_onboarding()["tours"]["lojas"] is True
+        assert _espera(page, lambda: server.get_onboarding()["tours"].get("lojas") is True)
         # na Ajuda dá para refazer o assistente
         page.goto(f"{gui}/#/ajuda")
         page.click("[data-onb='0']")
