@@ -104,7 +104,7 @@ def test_instalar_so_no_app_empacotado(monkeypatch, tmp_path):
     monkeypatch.setattr(paths, "FROZEN", True)
     monkeypatch.setattr(updater.subprocess, "Popen", lambda cmd, **kw: chamadas.append(cmd))
     updater.launch_installer(tmp_path / "x.exe")
-    assert "/VERYSILENT" in chamadas[0] and "/RELAUNCH=1" in chamadas[0]
+    assert "/VERYSILENT" in chamadas[0] and "/RELAUNCH=1" in chamadas[0] and "/FORCECLOSEAPPLICATIONS" in chamadas[0]  # fecha o app em execução sem perguntar
 
 
 # ---------------- instalador de ferramentas
