@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - run: pip install -r requirements.txt pytest
+      - name: Testes (os que precisam de OrcaSlicer, Blender ou ffmpeg se pulam sozinhos)
+        run: python -m pytest tests -q
+
+  empacotar:
+    # confere que o programa ainda empacota; o instalador só é montado na release
+    needs: test
+    if: github.event_name == 'push'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - run: pip install -r requirements.txt pyinstaller
+      - run: python build/build.py 0.0.0-ci --sem-instalador
+      - name: Sobe o servidor empacotado e consulta a API
+        shell: pwsh
+        run: |
+          $env:MINERADOR_HOME = "$env:RUNNER_TEMP\minerador"
+          $env:MINERADOR_SEM_JANELA = "1"
+          $p = Start-Process dist\Minerador3D\Minerador3D.exe -PassThru
+          $ok = $false
+          foreach ($i in 1..40) {
+            Start-Sleep 1
+            try { $r = Invoke-RestMethod http://127.0.0.1:8765/api/state -TimeoutSec 2; $ok = $true; break } catch {}
+          }
+          Stop-Process -Id $p.Id -Force
+          if (-not $ok) { throw "o app empacotado não respondeu" }
