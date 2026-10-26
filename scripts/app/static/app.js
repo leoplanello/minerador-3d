@@ -568,7 +568,7 @@ async function checkUpdate(force) {
     return setTimeout(() => checkUpdate(), 1000);
   }
   if (j.status === 'error') bar.innerHTML = `<div class="alert err"><div class="grow"><b>A atualização falhou</b>${esc(j.msg)}</div><button data-updapply>Tentar de novo</button></div>`;
-  else if (u.newer) bar.innerHTML = `<div class="alert upd"><div class="grow"><b>Versão ${esc(u.latest)} disponível</b><span class="small">Você está na ${esc(u.current)}.${u.notes ? ' ' + esc(u.notes.split('\n').find(l => l.trim()) || '') : ''}</span></div>
+  else if (u.newer) bar.innerHTML = `<div class="alert upd"><div class="grow"><b>Versão ${esc(u.latest)} disponível</b><span class="small">Você está na ${esc(u.current)}.${u.notes ? ' ' + esc(u.notes.split('\n').find(l => l.trim() && !/full changelog/i.test(l)) || '') : ''}</span></div>
       ${u.frozen ? '<button class="pri" data-updapply>Atualizar agora</button>' : `<a class="btn" href="${esc(u.page_url)}" target="_blank" rel="noopener">Ver novidades</a>`}</div>`;
   else bar.innerHTML = '';
 }
