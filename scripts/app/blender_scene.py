@@ -189,12 +189,58 @@ def furniture(asset, x, y, rot_deg, z=0.0):
     return new + [grp], hi_.z - lo_.z + z
 
 
+def solid(name, color, rough=0.5, metal=0.0):
+    m, b = make_mat(name, rough, Base_Color=(*color, 1))
+    b.inputs["Metallic"].default_value = metal
+    return m
+
+
+def prim(kind, loc, scale, mat, rot=(0, 0, 0), name="prop", **kw):
+    getattr(bpy.ops.mesh, f"primitive_{kind}_add")(location=loc, rotation=rot, **kw)
+    o = bpy.context.object
+    o.name, o.scale = name, scale
+    o.data.materials.append(mat)
+    return o
+
+
+def make_prop(kind, lo_, hi_):
+    """Objeto que a peça segura, feito de primitivas (o Poly Haven não tem chaves nem roteador). lo_/hi_ = caixa da peça já na parede. 'chaves': argola e chaves
+    penduradas na frente da peça; 'roteador': aparelho em pé, apoiado na peça. Posição por heurística: confira a imagem."""
+    cx, front, top, bottom = (lo_.x + hi_.x) / 2, lo_.y, hi_.z, lo_.z
+    out = []
+    if kind == "chaves":
+        metal = solid("chave", (0.78, 0.74, 0.62), 0.28, 1.0)
+        fob = solid("controle", (0.03, 0.03, 0.035), 0.35)
+        ay, az = front - 7, top - 4  # ponto de onde a argola pende
+        out.append(prim("torus", (cx, ay, az - 10), (1, 1, 1), metal, rot=(math.radians(90), 0, 0), name="argola", major_radius=10, minor_radius=1.1))
+        for k, (dx, ln, ang) in enumerate(((-9, 36, 6), (1, 40, -3), (10, 32, -8))):
+            a = math.radians(ang)
+            y0 = ay + (k - 1) * 2.4
+            hx, hz = cx + dx + math.sin(a) * 6, az - 21 - math.cos(a) * 6  # a cabeça (argola pequena) da chave
+            out.append(prim("torus", (hx, y0, hz), (1, 1, 1), metal, rot=(math.radians(90), 0, 0), name="cabeca-chave", major_radius=5.2, minor_radius=1.7))
+            bx, bz = hx - math.sin(a) * (ln / 2 + 6.5), hz - math.cos(a) * (ln / 2 + 6.5)
+            out.append(prim("cube", (bx, y0, bz), (2.6, 0.8, ln / 2), metal, rot=(0, math.radians(-ang), 0), name="lamina-chave", size=2))
+            for tooth in range(4):  # dentes da chave
+                tz = bz - ln / 2 + 3 + tooth * 7
+                out.append(prim("cube", (bx + 2.6 + (tooth % 2) * 0.8, y0, tz), (1.0, 0.8, 1.6), metal, name="lamina-chave", size=2))
+        out.append(prim("cube", (cx + 16, ay + 4, az - 40), (22, 7, 36), fob, rot=(0, math.radians(-10), 0), name="controle", size=1))
+        out[-1].modifiers.new("chanfro", "BEVEL").width = 2.5
+    elif kind == "roteador":
+        body = solid("roteador", (0.025, 0.025, 0.03), 0.45)
+        w, d, h = 175, 38, 215
+        out.append(prim("cube", (cx, front - d / 2 - 2, bottom + h / 2 + 10), (w / 2, d / 2, h / 2), body, name="roteador", size=2))
+        out[-1].modifiers.new("chanfro", "BEVEL").width = 3
+        led = solid("led", (0.05, 0.9, 0.2), 0.3)
+        out.append(prim("cube", (cx - w / 2 + 14, front - d - 2.4, bottom + h - 22), (1, 1, 1), led, name="led", size=1, scale=(5, 1, 5)))
+    return out
+
+
 def room_scene():
     """Parede e piso com texturas reais, sofá, mesa lateral e planta em escala real, HDRI de ambiente. Devolve o ponto que a câmera mira (a peça)."""
     wall = tex_material("sala-parede", PH / "plastered_wall_04", 3200, ("X", "Z"))
     floor = tex_material("sala-piso", PH / "laminate_floor_02", 1700, ("X", "Y"))
-    ctx.append(plane((0, 0.5, 1300), (math.radians(90), 0, 0), (9000, 2600), wall, "parede-sala"))
-    ctx.append(plane((0, -2500, 0), (0, 0, 0), (9000, 5000), floor, "piso-sala"))
+    ctx.append(plane((0, 0.5, 2500), (math.radians(90), 0, 0), (24000, 5000), wall, "parede-sala"))  # a câmera nunca vê a borda: parede, piso e teto passam do quadro
+    ctx.append(plane((0, -9000, 0), (0, 0, 0), (24000, 18000), floor, "piso-sala"))
     sofa, sofa_top = furniture("Sofa_01", 300, -520, 0)
     plant, _ = furniture("potted_plant_01", 2000, -400, 0)
     ctx.extend(sofa + plant)
@@ -218,6 +264,8 @@ def room_scene():
         obj_ctx.location = Vector((-(clo.x + chi.x) / 2, -chi.y, 1250 - (clo.z + chi.z) / 2))  # costas na parede, centro a 1,25 m do piso
     bpy.context.view_layer.update()
     clo, chi = bounds(obj_ctx)
+    if cfg.get("objeto"):
+        ctx.extend(make_prop(cfg["objeto"], clo, chi))
     nt = world_ctx.node_tree
     nt.nodes.clear()
     env, bg, out, tc, mp = (nt.nodes.new(t) for t in ("ShaderNodeTexEnvironment", "ShaderNodeBackground", "ShaderNodeOutputWorld", "ShaderNodeTexCoord", "ShaderNodeMapping"))
@@ -279,6 +327,12 @@ for ox, oy, w, h in ([] if PH else bars):  # na sala a janela é o HDRI; o caixi
     b.visible_camera = False  # só projeta sombra, a câmera não vê a "janela"
     ctx.append(b)
 
+if PH:
+    plo, phi = bounds(obj_ctx)
+    part_span = max(phi - plo)
+    props = [o for o in ctx if o.type == "MESH" and o.name.split(".")[0] in ("argola", "cabeca-chave", "lamina-chave", "controle", "roteador", "led")]
+    pts = [o.matrix_world @ Vector(c) for o in [obj_ctx] + props for c in o.bound_box]
+    framed_span = max(max(p[k] for p in pts) - min(p[k] for p in pts) for k in range(3))
 scene = bpy.context.scene
 scene.render.engine = "CYCLES" if engine == "CYCLES" else "BLENDER_EEVEE_NEXT"
 if engine == "CYCLES":
@@ -315,23 +369,27 @@ for i, (name, az, el, zoom, *rest) in enumerate(cfg["views"], 1):
         scene.cycles.denoiser = "OPENIMAGEDENOISE"
     elif engine != "CYCLES":
         scene.render.engine = "BLENDER_EEVEE_NEXT"
-    wide = bool(PH) and in_use and zoom >= 1  # na sala, a vista aberta mostra o ambiente: câmera longe e lente curta
-    dist = min(max(size * 12, 1200), 2600) if wide else size * cfg["dist"] * zoom
-    cam.data.lens = 30 if wide else 50
     focus = target if in_use else center
     a, e = math.radians(az + (-90 if in_use else cfg["turn"])), math.radians(el)
+    if PH and in_use:
+        # a peça ocupa uma fração da altura do quadro (perto 40 %, uso 30 %, médio 20 %, aberto 8 %); a distância sai da lente: d = tamanho * lente / (sensor * fração)
+        frac, fst, lens = {"uso": (0.30, 2.5, 50), "uso_perto": (0.40, 1.8, 50), "uso_medio": (0.20, 3.2, 50), "uso_aberto": (0.08, 5.0, 28)}[name]
+        if t is not None:  # vídeo: da cena (14 %) até a peça (38 %), a lente fecha junto
+            frac, fst, lens = 0.14 + 0.24 * t, 4.0 - 2.2 * t, 35 + 15 * t
+        span = framed_span if name == "uso" or t is not None else part_span  # com o objeto na cena, o enquadramento inclui o objeto
+        dist = span * lens / (36 * frac)
+        cam.data.lens, cam.data.dof.aperture_fstop = lens, fst
+    else:
+        dist = size * cfg["dist"] * zoom
+        cam.data.lens, cam.data.dof.aperture_fstop = 50, 2.8
     cam.location = focus + Vector((dist * math.cos(e) * math.cos(a), dist * math.cos(e) * math.sin(a), dist * math.sin(e)))
     aim(cam, focus)
+    if PH and in_use:  # regra dos terços: a peça fica no terço esquerdo e um pouco abaixo do centro
+        right = cam.matrix_world.to_quaternion() @ Vector((1, 0, 0))
+        up_ = cam.matrix_world.to_quaternion() @ Vector((0, 1, 0))
+        frame_h = dist * 36 / cam.data.lens
+        aim(cam, focus + right * frame_h / 6 - up_ * frame_h / 14)
     cam.data.dof.use_dof = in_use  # fundo desfocado dá a cara de foto de ambiente
     cam.data.dof.focus_distance = (cam.location - focus).length
-    cam.data.dof.aperture_fstop = 4.0 if wide else 2.0 if PH else 2.8
-    if t is not None and in_use:  # trajetória do vídeo: afasta-se menos a cada quadro, lente e abertura acompanham
-        far, near = min(max(size * 12, 1200), 2600) if PH else size * cfg["dist"], size * cfg["dist"] * 0.6
-        dist = far + (near - far) * t
-        cam.location = focus + Vector((dist * math.cos(e) * math.cos(a), dist * math.cos(e) * math.sin(a), dist * math.sin(e)))
-        aim(cam, focus)
-        cam.data.lens = 30 + 20 * t if PH else 50
-        cam.data.dof.focus_distance = (cam.location - focus).length
-        cam.data.dof.aperture_fstop = 4.0 - 2.0 * t if PH else 2.8
     scene.render.filepath = f"{outdir}/render_{i}.jpg"
     bpy.ops.render.render(write_still=True)

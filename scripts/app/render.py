@@ -58,12 +58,12 @@ def whiten(path):
 # ângulo (azimute, elevação, zoom da câmera) de cada vista que dá para pedir
 VIEWS = {"frente": (35, 28, 1.0), "lado": (125, 22, 1.0), "cima": (-50, 55, 1.0), "tras": (215, 25, 1.0),
          "frontal": (0, 12, 1.0), "topo": (0, 88, 1.0), "perfil": (90, 5, 1.0), "detalhe": (35, 20, 0.6),
-         "uso": (28, 10, 1.0), "uso_perto": (-24, 6, 0.6)}  # "uso*": a peça instalada no cenário (parede ou mesa)
+         "uso": (18, 8, 1.0), "uso_perto": (-24, 6, 0.6), "uso_medio": (28, 10, 1.0), "uso_aberto": (38, 12, 1.0)}  # "uso*": a peça instalada no cenário (parede ou mesa)
 VIEW_LABELS = {"frente": "Frente 3/4", "lado": "Lado", "cima": "De cima", "tras": "Trás 3/4", "frontal": "Frontal", "topo": "Topo", "perfil": "Perfil", "detalhe": "Detalhe (zoom)",
-               "uso": "Em uso (cenário)", "uso_perto": "Em uso, de perto"}
+               "uso": "Em uso (com o objeto)", "uso_perto": "Em uso, detalhe de perto", "uso_medio": "Ambiente médio", "uso_aberto": "Ambiente aberto"}
 QUALITY = {"rapido": (16, 12), "normal": (32, 24), "alta": (64, 64)}  # amostras EEVEE, Cycles
 FILL = {"perto": 2.4, "medio": 3.2, "longe": 3.8}  # distância da câmera em tamanhos da peça: quanto menor, mais a peça enche a imagem
-RENDER_DEFAULT = dict(color="#3a3a3a", finish="matte", background="white", views=["frente", "uso", "uso_perto", "lado"], size=1200,
+RENDER_DEFAULT = dict(color="#3a3a3a", finish="matte", background="white", views=["frente", "uso_perto", "uso", "uso_medio", "uso_aberto"], size=1200,
                       quality="normal", light="normal", shadow=True, fill="medio", turn=0, contexto="auto")
 WALL_WORDS = ("parede", "wall", "suporte", "porta-", "porta ", "prateleira", "gancho", "cabide", "organizador")  # o que se instala na parede
 CHOICES = dict(finish=("matte", "gloss", "silk"), background=("white", "gray", "warm"), quality=tuple(QUALITY), light=("soft", "normal", "strong"), fill=tuple(FILL), contexto=("auto", "parede", "mesa"))
@@ -89,6 +89,14 @@ def clean_render_cfg(d):
     return cfg | dict(views=views, size=size, shadow=bool(cfg["shadow"]), turn=turn)
 
 
+PROPS = {"chaves": ("chave", "chaveiro", "key"), "roteador": ("roteador", "modem", "router")}  # objeto que a peça segura, pelo título
+
+
+def prop_for(title):
+    t = title.lower()
+    return next((k for k, words in PROPS.items() if any(w in t for w in words)), "")
+
+
 def scene_for(cfg, title=""):
     """Cenário das vistas 'em uso': o escolhido na tela ou, no automático, parede quando o título fala de parede/suporte, senão mesa."""
     if cfg["contexto"] != "auto":
@@ -107,7 +115,7 @@ def render_images(model, outdir, cfg=None, title=""):
     for old in outdir.glob("render_*.jpg"):
         old.unlink()
     with tempfile.TemporaryDirectory() as tmp:
-        scene_cfg = cfg | dict(polyhaven=str(polyhaven.ROOT) if polyhaven.available() else "", views=[(v, *VIEWS[v]) for v in cfg["views"]], contexto=scene_for(cfg, title), samples_eevee=QUALITY[cfg["quality"]][0], samples_cycles=QUALITY[cfg["quality"]][1], dist=FILL[cfg["fill"]])
+        scene_cfg = cfg | dict(polyhaven=str(polyhaven.ROOT) if polyhaven.available() else "", views=[(v, *VIEWS[v]) for v in cfg["views"]], contexto=scene_for(cfg, title), objeto=prop_for(title), samples_eevee=QUALITY[cfg["quality"]][0], samples_cycles=QUALITY[cfg["quality"]][1], dist=FILL[cfg["fill"]])
         cfgfile = Path(tmp) / "cfg.json"
         cfgfile.write_text(json.dumps(scene_cfg), encoding="utf-8")
         stl = Path(model)
@@ -152,7 +160,7 @@ def render_frames(model, outdir, n, engine="EEVEE", res=(1080, 1920), title="", 
     for old in outdir.glob("render_*.jpg"):
         old.unlink()
     with tempfile.TemporaryDirectory() as tmp:
-        scene_cfg = cfg | dict(polyhaven=str(polyhaven.ROOT) if polyhaven.available() else "", contexto=scene_for(cfg, title), still_cycles=False, res=list(res),
+        scene_cfg = cfg | dict(polyhaven=str(polyhaven.ROOT) if polyhaven.available() else "", contexto=scene_for(cfg, title), objeto=prop_for(title), still_cycles=False, res=list(res),
                                views=[("uso", az, el, 1.0, t) for az, el, t in camera_path(n)], samples_eevee=QUALITY[cfg["quality"]][0],
                                samples_cycles=QUALITY[cfg["quality"]][1], dist=FILL[cfg["fill"]])
         cfgfile = Path(tmp) / "cfg.json"
