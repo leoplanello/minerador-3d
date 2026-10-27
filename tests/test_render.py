@@ -37,7 +37,7 @@ def test_3mf_sem_malha_e_cor_invalida(tmp_path):
 def test_render_real_gera_4_imagens_com_fundo_branco(tmp_path):
     from PIL import Image
     make3mf(tmp_path / "c.3mf")
-    files = render.render_images(tmp_path / "c.3mf", tmp_path / "out")
+    files = render.render_images(tmp_path / "c.3mf", tmp_path / "out", dict(views=["frente", "lado", "cima", "tras"]))
     assert len(files) == 4
     im = Image.open(files[0])
     assert im.size == (1200, 1200) and min(im.getpixel((5, 5))) > 235  # canto branco
@@ -97,3 +97,10 @@ def test_trajetoria_da_camera_abre_e_fecha_suave():
     ts = [t for _, _, t in p]
     assert ts == sorted(ts) and ts[1] - ts[0] < ts[12] - ts[11]  # começa devagar
     assert render.camera_path(1)[0][2] == 0
+
+
+def test_objeto_que_a_peca_segura_pelo_titulo():
+    assert render.prop_for("Porta Chaves De Parede Com Porta Treco") == "chaves"
+    assert render.prop_for("Suporte Parede Vertical Roteador Modem") == ""  # o aparelho esconderia a peça: sem objeto
+    assert render.prop_for("Vaso Decorativo") == ""
+    assert "uso_medio" in render.VIEWS and "uso_aberto" in render.VIEWS and render.RENDER_DEFAULT["views"][0] == "frente"

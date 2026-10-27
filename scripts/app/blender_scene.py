@@ -28,18 +28,37 @@ def bounds(o):
 
 
 def back_axis(o):
-    """Direção local da face de trás: o eixo mais fino do modelo, no lado que tem mais área plana (a placa que encosta na parede)."""
+    """Face de trás da peça: a das 6 direções com mais área plana encostada no extremo da caixa (a placa que vai na parede). Devolve (direção local, eixo, medidas)."""
     lo, hi = bounds(o)
     dims = hi - lo
-    ax = min(range(3), key=lambda i: dims[i])
-    area = {1: 0.0, -1: 0.0}
+    area = {}
     for p in o.data.polygons:
-        for s in (1, -1):
-            edge = hi[ax] if s == 1 else lo[ax]
-            if p.normal[ax] * s > 0.95 and abs(p.center[ax] - edge) < 0.08 * dims[ax] + 1e-6:
-                area[s] += p.area
-    s = 1 if area[1] >= area[-1] else -1
+        for ax in range(3):
+            for s in (1, -1):
+                edge = hi[ax] if s == 1 else lo[ax]
+                if p.normal[ax] * s > 0.95 and abs(p.center[ax] - edge) < 0.04 * dims[ax] + 0.5:
+                    area[(ax, s)] = area.get((ax, s), 0.0) + p.area
+    ax, s = max(area, key=area.get) if area else (min(range(3), key=lambda i: dims[i]), 1)
     return Vector((s if i == ax else 0) for i in range(3)), ax, dims
+
+
+def up_direction(o, back_ax):
+    """Direção local que vira 'cima' na parede: a que tem faces de apoio (prateleira, bandeja) abaixo da massa da peça. Sem faces de apoio, o maior lado restante."""
+    polys = list(o.data.polygons)
+    total = sum(p.area for p in polys) or 1.0
+    best, best_score = None, 0.0
+    for ax in (a for a in range(3) if a != back_ax):
+        for sgn in (1, -1):
+            d = Vector((sgn if i == ax else 0) for i in range(3))
+            centroid = sum(p.area * p.center.dot(d) for p in polys) / total
+            score = sum(p.area * (centroid - p.center.dot(d)) for p in polys if p.normal.dot(d) > 0.95)
+            if score > best_score:
+                best, best_score = d, score
+    if best is None:
+        lo, hi = bounds(o)
+        ax = max((a for a in range(3) if a != back_ax), key=lambda a: (hi - lo)[a])
+        best = Vector((1 if i == ax else 0) for i in range(3))
+    return best
 
 
 # peça de estúdio: centralizada no XY e apoiada na mesa (z = 0)
@@ -255,8 +274,7 @@ def room_scene():
     else:
         tbl, _ = furniture("side_table_01", -1550, -300, 0)
         ctx.extend(tbl)
-        up_ax = max((i for i in range(3) if i != back_ax), key=lambda i: dims0[i])
-        up = Vector((1 if i == up_ax else 0) for i in range(3))
+        up = up_direction(obj, back_ax)
         obj_ctx.rotation_mode = "QUATERNION"
         obj_ctx.rotation_quaternion = Matrix((back.cross(up), back, up)).to_quaternion()
         obj_ctx.location = (0, 0, 0)
