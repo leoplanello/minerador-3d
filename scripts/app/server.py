@@ -7,7 +7,6 @@ import re
 import sqlite3
 import zipfile
 from datetime import datetime
-import subprocess
 import sys
 import threading
 import urllib.request
@@ -16,6 +15,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 import paths  # noqa: E402
+import proc  # noqa: E402
 
 ROOT = paths.DATA  # banco, produtos e inbox; a pasta do projeto quando roda do código, %LOCALAPPDATA% quando instalado
 if not paths.FROZEN:
@@ -99,8 +99,8 @@ $app = '{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell
 
 def notify(title, msg):
     """Toast do Windows quando o fluxo precisa de uma pessoa. Texto vai por env var (sem injeção)."""
-    subprocess.Popen(["powershell", "-NoProfile", "-Command", TOAST], env=os.environ | {"N_TITLE": title, "N_MSG": msg},
-                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    proc.popen(["powershell", "-NoProfile", "-Command", TOAST], env=os.environ | {"N_TITLE": title, "N_MSG": msg},
+                     stdout=proc.DEVNULL, stderr=proc.DEVNULL)
 
 
 POPUP = """
@@ -120,8 +120,8 @@ $tm = New-Object Windows.Forms.Timer -Property @{Interval=60000}; $tm.Add_Tick({
 
 def popup(title, msg):
     """Aviso amarelo no canto inferior direito, sempre à frente, para ação manual (captcha, login). Clique ou 60 s fecha."""
-    subprocess.Popen(["powershell", "-NoProfile", "-Command", POPUP], env=os.environ | {"N_TITLE": title, "N_MSG": msg},
-                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    proc.popen(["powershell", "-NoProfile", "-Command", POPUP], env=os.environ | {"N_TITLE": title, "N_MSG": msg},
+                     stdout=proc.DEVNULL, stderr=proc.DEVNULL)
 
 
 IMAGES = ROOT / "db" / "images"
@@ -430,10 +430,10 @@ def run_images(lid, cfg):
         with render_lock:
             step("running")
             with db() as c:
-                m = c.execute("SELECT file_path FROM models WHERE listing_id=?", (lid,)).fetchone()
+                m = c.execute("SELECT m.file_path, l.title FROM models m JOIN listings l ON l.id=m.listing_id WHERE m.listing_id=?", (lid,)).fetchone()
             if not m or not m["file_path"]:
                 raise ValueError("envie o modelo 3D antes de gerar as imagens")
-            renderizar.render_images(ROOT / m["file_path"], PRODUCTS / str(lid) / "renders", cfg)
+            renderizar.render_images(ROOT / m["file_path"], PRODUCTS / str(lid) / "renders", cfg, title=m["title"] or "")
             step("ok")
     except Exception as e:  # erro fica visível no card da GUI
         step("error", str(e)[:300])
@@ -555,7 +555,7 @@ def suggest_terms(title):
     """Termos de busca em inglês (os sites de modelos 3D são em inglês) para o título do anúncio, pelo Claude."""
     prompt = (f"Anúncio de um produto: «{title[:150]}». Dê 6 termos curtos de busca, em inglês, para achar o modelo 3D imprimível desse produto "
               "no Printables ou MakerWorld (2 a 4 palavras cada, do mais provável ao mais amplo). Responda só com os termos, um por linha, sem numeração.")
-    r = subprocess.run([texto._cmd(), "-p"], input=prompt, capture_output=True, text=True, timeout=120, encoding="utf-8")
+    r = proc.run([texto._cmd(), "-p"], input=prompt, capture_output=True, text=True, timeout=120, encoding="utf-8")
     if r.returncode:
         raise ValueError("o Claude retornou erro: " + (r.stderr or r.stdout)[:200])
     out = [re.sub(r"^[\-*\d.)\s]+", "", x).strip() for x in r.stdout.splitlines()]
@@ -602,7 +602,7 @@ def model_info(d):
 
 
 def git(*args, timeout=60):
-    return subprocess.run(["git", *args], cwd=str(paths.SOURCE_ROOT), capture_output=True, text=True, timeout=timeout, creationflags=subprocess.CREATE_NO_WINDOW)
+    return proc.run(["git", *args], cwd=str(paths.SOURCE_ROOT), capture_output=True, text=True, timeout=timeout)
 
 
 def git_behind():
@@ -631,10 +631,10 @@ def run_restart():
     exe = Path(sys.executable)
     cmd = f'"{exe}"' if paths.FROZEN else f'"{exe.with_name("pythonw.exe") if exe.name.lower() == "python.exe" else exe}" "{Path(__file__).with_name("desktop.py")}"'
     # espera as portas fecharem e só então abre; roda solto, para sobreviver a este processo
-    subprocess.Popen(f'cmd /c ping -n 4 127.0.0.1 >nul & start "" {cmd}', cwd=str(paths.SOURCE_ROOT if not paths.FROZEN else paths.HOME), shell=True,
-                     creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW)
+    proc.popen(f'cmd /c ping -n 4 127.0.0.1 >nul & start "" {cmd}', cwd=str(paths.SOURCE_ROOT if not paths.FROZEN else paths.HOME), shell=True,
+                     creationflags=proc.DETACHED_PROCESS | proc.CREATE_NEW_PROCESS_GROUP, show=True)
     if not paths.FROZEN:  # o servidor é filho da janela (desktop.py): fecha a janela junto
-        subprocess.run(["taskkill", "/F", "/PID", str(os.getppid())], creationflags=subprocess.CREATE_NO_WINDOW)
+        proc.run(["taskkill", "/F", "/PID", str(os.getppid())])
     os._exit(0)
 
 
@@ -1391,7 +1391,7 @@ class H(BaseHTTPRequestHandler):
         pass
 
 
-def make_server(port=8765):
+def make_server(port=paths.PORT):
     """Prepara o banco e devolve o servidor HTTP (sem iniciar). O desktop.py instalado roda isto numa thread."""
     init()
     resume()
@@ -1399,5 +1399,5 @@ def make_server(port=8765):
 
 
 if __name__ == "__main__":
-    print("http://localhost:8765")
+    print(f"http://localhost:{paths.PORT}")
     make_server().serve_forever()

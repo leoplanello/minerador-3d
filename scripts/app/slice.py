@@ -1,7 +1,7 @@
 """Fatia um 3MF/STL com o Bambu Studio portátil (tools/bambustudio) e lê tempo e gramas do G-code."""
 import json
 import re
-import subprocess
+import proc
 from pathlib import Path
 
 from paths import TOOLS
@@ -38,8 +38,8 @@ def slice_model(model, outdir):
     cmd = [str(slicer), "--slice", "0", "--outputdir", str(outdir), "--load-settings", ";".join(str(bbl / x) for x in PROFILES),
            "--load-filaments", str(bbl / FILAMENT), str(model)]
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
-    except subprocess.TimeoutExpired:
+        r = proc.run(cmd, capture_output=True, text=True, timeout=600)
+    except proc.TimeoutExpired:
         raise ValueError("o fatiamento passou de 10 minutos; o modelo pode ser grande demais")
     out = next(outdir.glob("*.gcode"), None)
     if not out:

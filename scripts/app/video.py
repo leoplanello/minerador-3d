@@ -3,7 +3,7 @@ Tudo é configurável (formato, tempo por imagem, transição, zoom, legenda, fu
 import os
 import re
 import shutil
-import subprocess
+import proc
 import tempfile
 import textwrap
 from pathlib import Path
@@ -68,8 +68,18 @@ def captions(script, n, width=26):
     return [textwrap.fill(" ".join(g), width) for g in groups]
 
 
+def fit_caption(text, W, max_h, fs):
+    """Quebra a legenda em linhas que cabem na largura e reduz a fonte até o bloco caber em max_h px (mínimo 28). Devolve (texto, fonte)."""
+    flat = " ".join(text.split())
+    while True:
+        wrapped = textwrap.fill(flat, max(10, int(W * 0.86 / (0.52 * fs))))
+        if fs <= 28 or len(wrapped.splitlines()) * fs * 1.3 <= max_h:
+            return wrapped, fs
+        fs -= 2
+
+
 def duration(audio):
-    r = subprocess.run([str(FFPROBE), "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(audio)], capture_output=True, text=True)
+    r = proc.run([str(FFPROBE), "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(audio)], capture_output=True, text=True)
     return float(r.stdout.strip())
 
 
@@ -87,13 +97,12 @@ def make_video(images, script, out, voice=None, cfg=None, music=None):
     side = 1080 if cfg["format"] == "9:16" else int(min(W, H) * 0.86)
     img_y = 260 if cfg["format"] == "9:16" else (H - side) // 2
     ty = {"bottom": "h*0.755" if cfg["format"] == "9:16" else "h*0.84", "center": "(h-text_h)/2", "top": "h*0.06"}[cfg["caption_pos"]]
-    fs = round(cfg["caption_size"] * W / 1080)
-    wrap = max(14, round(26 * 52 / cfg["caption_size"] * (W / 1080 if W > 1080 else 1)))
+    max_h = H * (0.2 if cfg["format"] == "9:16" else 0.13)  # espaço livre abaixo da imagem para a legenda
     bg = "0x" + cfg["background"][1:]
     out.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory() as tmp:
         cmd, parts = [str(FFMPEG), "-y"], []
-        for i, (img, cap) in enumerate(zip(images, captions(script, n, wrap))):
+        for i, (img, cap) in enumerate(zip(images, captions(script, n, 10 ** 6))):
             if cfg["zoom"]:
                 cmd += ["-i", str(img)]
                 frames = max(2, round(per * cfg["fps"]))
@@ -107,7 +116,8 @@ def make_video(images, script, out, voice=None, cfg=None, music=None):
                 chain += f",fade=t=in:st=0:d={d:.2f}:color={bg},fade=t=out:st={per - d:.2f}:d={d:.2f}:color={bg}"
             if cfg["captions"]:
                 f = Path(tmp) / f"c{i}.txt"
-                f.write_text(cap, encoding="utf-8")
+                cap, fs = fit_caption(cap, W, max_h, round(cfg["caption_size"] * W / 1080))
+                f.write_text(cap, encoding="utf-8", newline="\n")  # CRLF vira uma linha em branco a mais no drawtext
                 txt = f.as_posix().replace(":", "\\:")
                 box = ":box=1:boxcolor=black@0.5:boxborderw=22" if cfg["caption_box"] else ""
                 color = "white" if cfg["caption_box"] and cfg["caption_color"].lower() == "#333333" else cfg["caption_color"]  # texto escuro some na caixa escura
@@ -133,7 +143,7 @@ def make_video(images, script, out, voice=None, cfg=None, music=None):
             maps += ["-map", "[aout]"]
         cmd += ["-filter_complex", graph] + maps + (["-c:a", "aac"] if audio else [])
         cmd += ["-r", str(cfg["fps"]), "-pix_fmt", "yuv420p", "-c:v", "libx264", "-crf", str(CRF[cfg["quality"]]), "-t", f"{total:.2f}", str(out)]
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=900)
+        r = proc.run(cmd, capture_output=True, text=True, timeout=900)
     if r.returncode or not out.exists():
         raise ValueError("o ffmpeg falhou: " + r.stderr[-300:])
     return out

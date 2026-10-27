@@ -14,7 +14,7 @@ Na primeira abertura, um assistente leva você pelos passos: baixar as ferrament
 
 - **Lojas:** lê os anúncios mais vendidos de lojas do Mercado Livre com o Chrome, um por vez, parando no captcha ou no login para você resolver.
 - **Produtos:** ranking por vendas, avaliações, crescimento e preço, em lista ou grade. Você aprova ou descarta.
-- **Produção:** busca o modelo no Printables, MakerWorld e Thingiverse (com a licença à vista), fatia no Bambu Studio (perfil A1), calcula custo e margem, escreve o texto com o Claude, gera imagens no Blender e monta o vídeo com o ffmpeg. Imagens e vídeo têm opções detalhadas.
+- **Produção:** busca o modelo no Printables, MakerWorld e Thingiverse (com a licença à vista), fatia no Bambu Studio (perfil A1), calcula custo e margem, escreve o texto com o Claude, gera imagens no Blender (foto de estúdio em fundo branco e vistas "em uso", com a peça na parede ou na mesa) e monta o vídeo com o ffmpeg. Imagens e vídeo têm opções detalhadas.
 - **Resumo:** tudo o que foi feito num lugar só, com simulação de lucro mensal.
 - **Publicação:** Mercado Livre pela API oficial. Na Shopee não há automação (a Shopee bloqueia navegador controlado por programa): o app prepara o kit e você cadastra pela Central do Vendedor.
 

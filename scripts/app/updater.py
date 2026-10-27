@@ -4,7 +4,7 @@ import hashlib
 import json
 import os
 import re
-import subprocess
+import proc
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -93,5 +93,5 @@ def launch_installer(path):
     """Roda o instalador silencioso (por usuário, sem administrador) pedindo que reabra o app no fim. Quem chama encerra o app logo depois."""
     if not paths.FROZEN:
         raise ValueError("a instalação automática só funciona no app instalado (.exe)")
-    subprocess.Popen([str(path), "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/CLOSEAPPLICATIONS", "/FORCECLOSEAPPLICATIONS", "/RELAUNCH=1"],
-                     creationflags=getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
+    proc.popen([str(path), "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/CLOSEAPPLICATIONS", "/FORCECLOSEAPPLICATIONS", "/RELAUNCH=1"], show=True,
+                     creationflags=proc.DETACHED_PROCESS | proc.CREATE_NEW_PROCESS_GROUP)

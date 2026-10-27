@@ -31,6 +31,6 @@ def test_prompt_nao_inventa_o_que_falta():
 def test_generate_usa_o_cli(monkeypatch):
     monkeypatch.setenv("CLAUDE_CMD", "claude-falso")
     seen = {}
-    monkeypatch.setattr(texto.subprocess, "run", lambda cmd, **kw: seen.update(cmd=cmd, prompt=kw["input"]) or SimpleNamespace(returncode=0, stdout=json.dumps(OK), stderr=""))
+    monkeypatch.setattr(texto.proc, "run", lambda cmd, **kw: seen.update(cmd=cmd, prompt=kw["input"]) or SimpleNamespace(returncode=0, stdout=json.dumps(OK), stderr=""))
     assert texto.generate(dict(title="X", price=39, material="PLA", minutes=60, grams=10, brand="", colors="", sizes="", days="3"))["title"] == OK["title"]
     assert seen["cmd"] == ["claude-falso", "-p"] and "Responda SOMENTE com um JSON" in seen["prompt"]

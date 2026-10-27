@@ -1,7 +1,7 @@
 """Gera as fotos do anúncio a partir do modelo 3D usando o Blender portátil (tools/blender)."""
 import json
 import re
-import subprocess
+import proc
 import tempfile
 import zipfile
 from pathlib import Path
@@ -55,13 +55,16 @@ def whiten(path):
 
 # ângulo (azimute, elevação, zoom da câmera) de cada vista que dá para pedir
 VIEWS = {"frente": (35, 28, 1.0), "lado": (125, 22, 1.0), "cima": (-50, 55, 1.0), "tras": (215, 25, 1.0),
-         "frontal": (0, 12, 1.0), "topo": (0, 88, 1.0), "perfil": (90, 5, 1.0), "detalhe": (35, 20, 0.6)}
-VIEW_LABELS = {"frente": "Frente 3/4", "lado": "Lado", "cima": "De cima", "tras": "Trás 3/4", "frontal": "Frontal", "topo": "Topo", "perfil": "Perfil", "detalhe": "Detalhe (zoom)"}
+         "frontal": (0, 12, 1.0), "topo": (0, 88, 1.0), "perfil": (90, 5, 1.0), "detalhe": (35, 20, 0.6),
+         "uso": (28, 10, 1.0), "uso_perto": (-24, 6, 0.6)}  # "uso*": a peça instalada no cenário (parede ou mesa)
+VIEW_LABELS = {"frente": "Frente 3/4", "lado": "Lado", "cima": "De cima", "tras": "Trás 3/4", "frontal": "Frontal", "topo": "Topo", "perfil": "Perfil", "detalhe": "Detalhe (zoom)",
+               "uso": "Em uso (cenário)", "uso_perto": "Em uso, de perto"}
 QUALITY = {"rapido": (16, 12), "normal": (32, 24), "alta": (64, 64)}  # amostras EEVEE, Cycles
 FILL = {"perto": 2.4, "medio": 3.2, "longe": 3.8}  # distância da câmera em tamanhos da peça: quanto menor, mais a peça enche a imagem
-RENDER_DEFAULT = dict(color="#3a3a3a", finish="matte", background="white", views=["frente", "lado", "cima", "tras"], size=1200,
-                      quality="normal", light="normal", shadow=True, fill="medio", turn=0)
-CHOICES = dict(finish=("matte", "gloss", "silk"), background=("white", "gray", "warm"), quality=tuple(QUALITY), light=("soft", "normal", "strong"), fill=tuple(FILL))
+RENDER_DEFAULT = dict(color="#3a3a3a", finish="matte", background="white", views=["frente", "uso", "uso_perto", "lado"], size=1200,
+                      quality="normal", light="normal", shadow=True, fill="medio", turn=0, contexto="auto")
+WALL_WORDS = ("parede", "wall", "suporte", "porta-", "porta ", "prateleira", "gancho", "cabide", "organizador")  # o que se instala na parede
+CHOICES = dict(finish=("matte", "gloss", "silk"), background=("white", "gray", "warm"), quality=tuple(QUALITY), light=("soft", "normal", "strong"), fill=tuple(FILL), contexto=("auto", "parede", "mesa"))
 
 
 def clean_render_cfg(d):
@@ -84,9 +87,17 @@ def clean_render_cfg(d):
     return cfg | dict(views=views, size=size, shadow=bool(cfg["shadow"]), turn=turn)
 
 
-def render_images(model, outdir, cfg=None):
+def scene_for(cfg, title=""):
+    """Cenário das vistas 'em uso': o escolhido na tela ou, no automático, parede quando o título fala de parede/suporte, senão mesa."""
+    if cfg["contexto"] != "auto":
+        return cfg["contexto"]
+    t = title.lower()
+    return "parede" if "parede" in t or "wall" in t or (any(w in t for w in WALL_WORDS) and "mesa" not in t and "bancada" not in t) else "mesa"
+
+
+def render_images(model, outdir, cfg=None, title=""):
     """Devolve a lista de JPGs gerados (render_1.jpg...). Tenta EEVEE e cai para Cycles (CPU) se a placa de vídeo não aceitar.
-    cfg: dict de clean_render_cfg ou, por compatibilidade, só a cor '#rrggbb'."""
+    cfg: dict de clean_render_cfg ou, por compatibilidade, só a cor '#rrggbb'. title: título do anúncio, escolhe o cenário das vistas 'em uso'."""
     if not BLENDER.exists():
         raise ValueError("Blender não encontrado em tools/blender")
     cfg = clean_render_cfg(dict(color=cfg) if isinstance(cfg, str) else cfg)
@@ -94,7 +105,7 @@ def render_images(model, outdir, cfg=None):
     for old in outdir.glob("render_*.jpg"):
         old.unlink()
     with tempfile.TemporaryDirectory() as tmp:
-        scene_cfg = cfg | dict(views=[VIEWS[v] for v in cfg["views"]], samples_eevee=QUALITY[cfg["quality"]][0], samples_cycles=QUALITY[cfg["quality"]][1], dist=FILL[cfg["fill"]])
+        scene_cfg = cfg | dict(views=[(v, *VIEWS[v]) for v in cfg["views"]], contexto=scene_for(cfg, title), samples_eevee=QUALITY[cfg["quality"]][0], samples_cycles=QUALITY[cfg["quality"]][1], dist=FILL[cfg["fill"]])
         cfgfile = Path(tmp) / "cfg.json"
         cfgfile.write_text(json.dumps(scene_cfg), encoding="utf-8")
         stl = Path(model)
@@ -104,15 +115,16 @@ def render_images(model, outdir, cfg=None):
         err = ""
         for engine in ("EEVEE", "CYCLES"):
             try:
-                r = subprocess.run([str(BLENDER), "-b", "-P", str(SCENE), "--", str(stl), str(outdir), str(cfgfile), engine],
+                r = proc.run([str(BLENDER), "-b", "-P", str(SCENE), "--", str(stl), str(outdir), str(cfgfile), engine],
                                    capture_output=True, text=True, timeout=900)
-            except subprocess.TimeoutExpired:
+            except proc.TimeoutExpired:
                 raise ValueError("a geração das imagens passou de 15 minutos")
             files = sorted(outdir.glob("render_*.jpg"))
             if len(files) == len(cfg["views"]):
                 if cfg["background"] == "white":  # a foto principal do ML precisa de fundo branco puro
-                    for f in files:
-                        whiten(f)
+                    for f, v in zip(files, cfg["views"]):
+                        if not v.startswith("uso"):  # o cenário em uso mantém a cor do ambiente
+                            whiten(f)
                 return files
             err = (r.stderr or r.stdout)[-300:]
     raise ValueError(f"o Blender não gerou as imagens: {err}")

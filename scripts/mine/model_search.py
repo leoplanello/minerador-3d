@@ -25,6 +25,7 @@ SITES = {  # a ordem é a de preferência (impressora Bambu Lab: MakerWorld prim
     "thingiverse": "Thingiverse",
 }
 # páginas de busca dos sites que exigem navegador e como reconhecer o link de um modelo nelas
+LICENSE_PAGES = 5  # quantos modelos por site têm a página aberta para ler a licença
 BROWSER_SITES = {
     "makerworld": dict(search="https://makerworld.com/pt/search/models?keyword={q}", link=r"/models/(\d+)"),
     "thingiverse": dict(search="https://www.thingiverse.com/search?q={q}&type=things&sort=popular", link=r"/thing:(\d+)"),
@@ -36,11 +37,26 @@ def commercial_ok(license_name):
     n = (license_name or "").lower()
     if not n:
         return None
-    if "noncommercial" in n or "non-commercial" in n or re.search(r"\bnc\b", n):
+    if "noncommercial" in n or "non-commercial" in n or re.search(r"\bnc\b", n) or "standard digital file" in n:  # a licença padrão do MakerWorld é só para uso pessoal
         return False
-    if any(k in n for k in ("creative commons", "cc by", "cc0", "public domain", "gnu", "mit", "apache", "bsd")):
+    if any(k in n for k in ("creative commons", "cc by", "cc0", "public domain", "gnu", "mit", "apache", "bsd")) or re.fullmatch(r"by(-sa|-nd)?", n):
         return True
     return None
+
+
+def parse_license(site, html):
+    """Licença escrita na página do modelo (MakerWorld: JSON da página; Thingiverse: link da Creative Commons). '' se não achar."""
+    if site == "makerworld":
+        m = re.search(r'"license":"([^"]{1,60})"', html)  # o primeiro é o do modelo da página; os seguintes são de modelos sugeridos
+        return m.group(1).strip() if m else ""
+    m = re.search(r"creativecommons\.org/(licenses/([a-z\-]+)|publicdomain/zero)/", html)
+    if not m:
+        return ""
+    return "Creative Commons — " + (m.group(2).upper().replace("-", " ") if m.group(2) else "CC0")
+
+
+def clean_title(t):
+    return re.sub(r"^Thumbnail representing\s+", "", t).strip()
 
 
 def _gql(query, variables):
@@ -105,7 +121,7 @@ def extract_model_links(site, anchors):
         m = rx.search(a.get("href", ""))
         if not m or m.group(1) in seen:
             continue
-        title = (a.get("alt") or a.get("text") or "").strip().split("\n")[0][:140]
+        title = clean_title((a.get("alt") or a.get("text") or "").strip().split("\n")[0])[:140]
         if not title:
             continue
         seen.add(m.group(1))
@@ -142,9 +158,18 @@ def search_browser(q, profile, sites, limit=8, on_captcha=lambda paused, kind="c
                     page.mouse.wheel(0, 1500)
                     page.wait_for_timeout(1500)
                     found = extract_model_links(site, page.eval_on_selector_all("a[href]", ANCHORS_JS))[:limit]
+                    for r in found[:LICENSE_PAGES]:  # a página de busca não traz a licença: abro a página de cada modelo
+                        try:
+                            page.goto(r["url"], wait_until="domcontentloaded", timeout=45000)
+                            page.wait_for_timeout(2500)
+                            r["license"] = parse_license(site, page.content())
+                            r["commercial"] = commercial_ok(r["license"])
+                        except Exception:
+                            pass  # fica sem licença; a tela avisa "licença não informada"
                     results += found
                     if not found:
-                        notes.append(f"{SITES[site]}: nenhum modelo encontrado na página (o site pode ter mudado)")
+                        notes.append(f"{SITES[site]}: nenhum modelo encontrado na página" + (
+                            "; com o navegador oculto o site costuma bloquear, ligue 'Mostrar o navegador'" if headless else " (o site pode ter mudado)"))
                 except Exception as e:
                     notes.append(f"{SITES[site]}: {str(e)[:120]}")
         finally:

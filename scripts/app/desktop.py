@@ -1,7 +1,7 @@
 """App desktop: abre a GUI numa janela própria (WebView2).
 Instalado (.exe), o servidor roda numa thread deste mesmo processo. Do código, sobe o server.py se ele não estiver rodando e o encerra ao fechar a janela."""
 import os
-import subprocess
+import proc as hidden
 import sys
 import threading
 import time
@@ -12,7 +12,7 @@ import webview
 
 import paths
 
-URL = "http://localhost:8765"
+URL = f"http://localhost:{paths.PORT}"
 SERVER = Path(__file__).parent / "server.py"
 
 
@@ -32,7 +32,7 @@ def main():
             httpd = server.make_server()
             threading.Thread(target=httpd.serve_forever, daemon=True).start()
         else:
-            proc = subprocess.Popen([sys.executable, str(SERVER)], creationflags=subprocess.CREATE_NO_WINDOW)
+            proc = hidden.popen([sys.executable, str(SERVER)])
     for _ in range(60):
         if up():
             break

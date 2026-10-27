@@ -58,7 +58,7 @@ def test_abrir_chrome_para_login_so_em_sites_conhecidos(monkeypatch):
     import pytest
     import store_reader as sr
     chamadas = []
-    monkeypatch.setattr(sr.subprocess, "Popen", lambda cmd: chamadas.append(cmd))
+    monkeypatch.setattr(sr.proc, "popen", lambda cmd, **kw: chamadas.append(cmd))
     monkeypatch.setattr(sr, "chrome_path", lambda: "chrome.exe")
     monkeypatch.setattr(sr, "list_profiles", lambda: ["user1"])
     sr.open_for_login("user1", "https://www.mercadolivre.com.br/")

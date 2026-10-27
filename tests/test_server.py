@@ -180,7 +180,7 @@ def test_atualizar_dados_da_loja_nao_apaga_o_que_ja_se_sabia(tmp_path, monkeypat
     server.init()
     with server.db() as c:
         c.execute("INSERT INTO stores(url,name,logo,sales) VALUES('https://www.mercadolivre.com.br/pagina/x','Antigo','https://l/a.jpg',50)")
-    monkeypatch.setattr(server, "read_store_info", lambda url, profile, on_captcha=None: dict(name="PEKO 3D", logo="", followers=3400))
+    monkeypatch.setattr(server, "read_store_info", lambda url, profile, on_captcha=None, headless=False: dict(name="PEKO 3D", logo="", followers=3400))
     server.run_store_info([1], "user1")
     with server.db() as c:
         s = dict(c.execute("SELECT * FROM stores WHERE id=1").fetchone())

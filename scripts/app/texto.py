@@ -3,7 +3,7 @@ import json
 import os
 import re
 import shutil
-import subprocess
+import proc
 from pathlib import Path
 
 RULES = """Escreva em português do Brasil, como uma pessoa que vende o produto, sem tom de propaganda.
@@ -65,7 +65,7 @@ def parse_reply(text):
 
 
 def generate(p):
-    r = subprocess.run([_cmd(), "-p"], input=build_prompt(p), capture_output=True, text=True, timeout=240, encoding="utf-8")
+    r = proc.run([_cmd(), "-p"], input=build_prompt(p), capture_output=True, text=True, timeout=240, encoding="utf-8")
     if "not logged in" in (r.stdout + r.stderr).lower():
         raise ValueError(f"o Claude da linha de comando não está logado. Abra um terminal, rode `{_cmd()}` e digite /login uma vez.")
     if r.returncode != 0:

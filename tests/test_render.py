@@ -67,3 +67,25 @@ def test_enquadramento_e_giro():
     for bad in ({"fill": "x"}, {"turn": 360}, {"turn": -1}):
         with pytest.raises(ValueError):
             render.clean_render_cfg(bad)
+
+
+def test_cenario_em_uso_automatico_pelo_titulo():
+    auto = render.clean_render_cfg({})
+    assert render.scene_for(auto, "Suporte Parede Vertical Compativel Roteador") == "parede"
+    assert render.scene_for(auto, "Porta Chaves De Parede Com Porta Treco") == "parede"
+    assert render.scene_for(auto, "Suporte de Mesa para Celular") == "mesa"
+    assert render.scene_for(auto, "Vaso Decorativo Geométrico") == "mesa"
+    assert render.scene_for(render.clean_render_cfg({"contexto": "mesa"}), "Suporte Parede") == "mesa"
+    with pytest.raises(ValueError):
+        render.clean_render_cfg({"contexto": "praia"})
+
+
+@pytest.mark.skipif(not render.BLENDER.exists(), reason="Blender portátil não instalado")
+@pytest.mark.parametrize("cenario", ["parede", "mesa"])
+def test_render_real_em_uso_nao_vira_fundo_branco(tmp_path, cenario):
+    from PIL import Image
+    make3mf(tmp_path / "c.3mf")
+    files = render.render_images(tmp_path / "c.3mf", tmp_path / "out", dict(views=["frente", "uso"], size=600, quality="rapido", contexto=cenario))
+    studio, uso = (Image.open(f).convert("RGB") for f in files)
+    assert min(studio.getpixel((5, 5))) > 235  # a foto principal continua com fundo branco
+    assert min(uso.getpixel((5, 5))) < 245 or min(uso.getpixel((590, 590))) < 245  # o cenário tem cor e sombra, não é branco puro
