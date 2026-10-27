@@ -25,6 +25,7 @@ import ml  # noqa: E402
 import render as renderizar  # noqa: E402
 import slice as fatiar  # noqa: E402
 import video as videos  # noqa: E402
+import identity  # noqa: E402
 import texto  # noqa: E402  (scripts/app/slice.py; mesmo diretório do server.py)
 from classify import score  # noqa: E402
 import model_search  # noqa: E402
@@ -545,10 +546,52 @@ def run_model_search(lid, q, profile, sites, headless=None):
         job["results"].sort(key=lambda r: list(model_search.SITES).index(r["source"]))  # MakerWorld primeiro
         if not job["results"] and not job["notes"]:
             job["notes"].append("nenhum modelo achado; os sites estão em inglês, use “Sugerir termos”")
-        job.update(status="done", msg=f"{len(job['results'])} modelos encontrados")
+        job.update(msg=f"{len(job['results'])} modelos encontrados")
+        compare_with_ad(lid, job)
+        job.update(status="done")
     except Exception as e:
         job.update(status="error", msg=str(e)[:300])
-    put_setting(f"msearch:{lid}", {k: job.get(k) for k in ("q", "sites", "headless", "results", "notes", "msg")} | dict(at=datetime.now().isoformat(timespec="seconds")))
+    put_setting(f"msearch:{lid}", {k: job.get(k) for k in ("q", "sites", "headless", "results", "notes", "msg", "verdict", "best")} | dict(at=datetime.now().isoformat(timespec="seconds")))
+
+
+def compare_with_ad(lid, job):
+    """Nota de identidade de cada candidato contra a foto do anúncio. job['verdict']: 'identico' (nota alta) ou 'sem_identico'; sem foto ou sem Claude, só avisa."""
+    job["verdict"] = job["best"] = None
+    if not job["results"]:
+        return
+    with db() as c:
+        row = c.execute("SELECT title FROM listings WHERE id=?", (lid,)).fetchone()
+    photo = IMAGES / f"{lid}.img"
+    if not photo.is_file():
+        job["notes"].append("sem a foto do anúncio guardada: a nota de identidade não foi calculada")
+        return
+    job["msg"] += ". Comparando com a foto do anúncio…"
+    try:
+        job["best"], job["verdict"] = identity.score_candidates(row["title"] if row else "", [photo], job["results"])
+        job["msg"] = job["msg"].replace(". Comparando com a foto do anúncio…", "")
+        if job["verdict"] == "identico":
+            auto_accept(lid, job)
+        else:
+            job["notes"].append(f"nenhum modelo parece idêntico (nota mínima {identity.THRESHOLD}): escolha um à mão ou envie o seu STL")
+    except ValueError as e:
+        job["notes"].append("nota de identidade indisponível: " + str(e)[:150])
+
+
+def auto_accept(lid, job):
+    """Modelo idêntico (nota alta, licença sem restrição comercial) do Printables, com um único arquivo e sem modelo já escolhido: guarda sozinho.
+    Com mais de um arquivo ou em outro site, a pessoa escolhe (não dá para saber qual arquivo cabe na mesa)."""
+    r = job["results"][job["best"]]
+    with db() as c:
+        m = c.execute("SELECT file_path FROM models WHERE listing_id=?", (lid,)).fetchone()
+    if r["source"] != "printables" or (m and m["file_path"]):
+        return
+    try:
+        files = model_search.printables_files(r["id"])
+        if len(files) == 1:
+            get_printables_model(lid, r["id"], files[0]["id"], r["title"], r["url"], r["license"], model_info(dict(r, q=job["q"], file_size=files[0]["size"], model_id=r["id"])))
+            job["msg"] += f". Modelo idêntico (nota {r['identity']['score']}) guardado sozinho"
+    except ValueError as e:
+        job["notes"].append("não baixei o modelo idêntico sozinho: " + str(e)[:120])
 
 
 def suggest_terms(title):
