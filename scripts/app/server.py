@@ -542,6 +542,7 @@ def run_model_search(lid, q, profile, sites, headless=None):
             job["notes"] += n
         elif browser:
             job["notes"].append("MakerWorld e Thingiverse precisam de um perfil do Chrome escolhido no topo da tela")
+        job["results"].sort(key=lambda r: list(model_search.SITES).index(r["source"]))  # MakerWorld primeiro
         if not job["results"] and not job["notes"]:
             job["notes"].append("nenhum modelo achado; os sites estão em inglês, use “Sugerir termos”")
         job.update(status="done", msg=f"{len(job['results'])} modelos encontrados")
@@ -881,7 +882,7 @@ def health():
         except Exception:
             return ""
     claude = which(texto._cmd)
-    return dict(orca=fatiar.ORCA.exists(), blender=renderizar.BLENDER.exists(), ffmpeg=videos.FFMPEG.exists(), chrome=bool(which(chrome_path)), claude=bool(claude),
+    return dict(slicer=fatiar.SLICER.exists(), blender=renderizar.BLENDER.exists(), ffmpeg=videos.FFMPEG.exists(), chrome=bool(which(chrome_path)), claude=bool(claude),
                 profiles=list_profiles(), ml=ml.status(), costs_confirmed=bool(get_costs()["confirmado"]), business=get_business())
 
 
@@ -897,7 +898,7 @@ def tools_status():
 
 def _tool_ok(name):
     """Ferramenta achada fora da pasta do app (ex.: ffmpeg no PATH) também vale."""
-    return {"orcaslicer": fatiar.ORCA.exists(), "blender": renderizar.BLENDER.exists(), "ffmpeg": videos.FFMPEG.exists()}[name]
+    return {"bambustudio": fatiar.SLICER.exists(), "blender": renderizar.BLENDER.exists(), "ffmpeg": videos.FFMPEG.exists()}[name]
 
 
 def run_tool_install(name):

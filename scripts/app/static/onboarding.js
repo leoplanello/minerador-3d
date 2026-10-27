@@ -33,7 +33,7 @@ const Onboarding = {
         <p class="small mut">Este assistente leva uns 5 minutos e pode ser refeito depois em Ajuda. Nada é publicado sem o seu clique.</p>`},
       {t: 'Ferramentas do computador', body: () => `<p>O app usa estes programas. Os que faltam podem ser baixados aqui, direto do site oficial, com conferência de integridade.</p>
         ${(this.tools || []).map(t => { const j = t.job || {}, run = j.status === 'running', pct = j.total ? Math.round(j.done / j.total * 100) : 0;
-          return `<div class="obrow"><span class="grow"><b>${esc(t.label)}</b><div class="small mut">${{orcaslicer: 'Fatia o modelo e calcula tempo e filamento.', blender: 'Gera as imagens do anúncio.', ffmpeg: 'Monta o vídeo.'}[t.name] || ''} Download de cerca de ${t.size_mb} MB.</div>
+          return `<div class="obrow"><span class="grow"><b>${esc(t.label)}</b><div class="small mut">${{bambustudio: 'Fatia o modelo e calcula tempo e filamento.', blender: 'Gera as imagens do anúncio.', ffmpeg: 'Monta o vídeo.'}[t.name] || ''} Download de cerca de ${t.size_mb} MB.</div>
             ${run ? `<div class="bar"><i style="width:${pct}%"></i></div><div class="small mut">${j.stage === 'baixando' ? 'Baixando… ' + pct + '%' : j.stage === 'conferindo' ? 'Conferindo a integridade…' : 'Instalando…'}</div>` : ''}
             ${j.status === 'error' ? `<div class="small" style="color:var(--red)">${esc(j.msg)}</div>` : ''}</span>
             ${t.installed ? '<span class="yes">✓ pronto</span>' : run ? '<span class="small mut">aguarde…</span>' : `<button class="sm pri" data-toolinstall="${esc(t.name)}">Baixar e instalar</button>`}</div>`; }).join('')}
@@ -50,7 +50,7 @@ const Onboarding = {
         <a class="btn" href="#/config" data-obgo>Abrir Configurações</a>`},
       {t: 'Primeira loja', body: () => `<p>Cole a URL de uma loja do Mercado Livre que vende produtos que você quer fazer. O Chrome vai abrir e ler os anúncios mais vendidos. Pode ser feito depois.</p>
         <textarea id="obstore" placeholder="https://www.mercadolivre.com.br/pagina/nome_da_loja"></textarea>`, save: () => this.saveStore()},
-      {t: 'Tudo pronto', body: () => `<p>Resumo do que está configurado:</p>${row('Ferramentas de produção', h.orca && h.blender && h.ffmpeg, 'Fatiamento, imagens e vídeo.')}${row('Texto com o Claude', h.claude, 'Login do Claude.')}
+      {t: 'Tudo pronto', body: () => `<p>Resumo do que está configurado:</p>${row('Ferramentas de produção', h.slicer && h.blender && h.ffmpeg, 'Fatiamento, imagens e vídeo.')}${row('Texto com o Claude', h.claude, 'Login do Claude.')}
         ${row('Custos confirmados', h.costs_confirmed, 'Margem confiável.')}${row('Mercado Livre conectado', h.ml && h.ml.connected, 'Publicação pelo app (opcional).')}
         <p class="small mut">O que faltar fica sinalizado nas telas. Em Ajuda você refaz este assistente e vê o tour de cada tela.</p>`},
     ];

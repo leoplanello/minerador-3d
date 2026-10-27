@@ -10,7 +10,7 @@ SOURCE_ROOT = Path(__file__).resolve().parent.parent.parent
 # RESOURCES: arquivos que vêm com o programa (static/, db/schema.sql, blender_scene.py, VERSION), somente leitura
 RESOURCES = Path(getattr(sys, "_MEIPASS", SOURCE_ROOT)) if FROZEN else SOURCE_ROOT
 HOME = Path(os.environ.get("MINERADOR_HOME") or (Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local")) / "Minerador3D"))
-# DATA: banco (db/), produtos (products/) e caixa de entrada (inbox/). TOOLS: OrcaSlicer, Blender e ffmpeg.
+# DATA: banco (db/), produtos (products/) e caixa de entrada (inbox/). TOOLS: Bambu Studio, Blender e ffmpeg.
 DATA = Path(os.environ.get("MINERADOR_DATA") or (HOME / "data" if FROZEN else SOURCE_ROOT))
 TOOLS = Path(os.environ.get("MINERADOR_TOOLS") or (HOME / "tools" if FROZEN else SOURCE_ROOT / "tools"))
 UPDATES = HOME / "updates"
