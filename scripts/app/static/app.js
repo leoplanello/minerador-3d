@@ -185,8 +185,8 @@ const VIEWS = {
         <p id="mstate" class="small mut" style="margin:0 0 12px"></p>
         <div class="msearch"><h3>Achar o modelo nos sites</h3>
           <div class="row"><input id="msq" type="search" class="grow" placeholder="O que buscar (ex.: porta chaves de parede)" aria-label="Buscar modelo"><button id="msgo" class="pri sm">${ic('search')}Buscar modelos</button></div>
-          <div class="row small mut" style="margin:6px 0"><label><input type="checkbox" data-msite="printables" checked> Printables</label>
-            <label><input type="checkbox" data-msite="makerworld" checked> MakerWorld</label><label><input type="checkbox" data-msite="thingiverse" checked> Thingiverse</label>
+          <div class="row small mut" style="margin:6px 0"><label><input type="checkbox" data-msite="makerworld" checked> MakerWorld</label>
+            <label><input type="checkbox" data-msite="printables" checked> Printables</label><label><input type="checkbox" data-msite="thingiverse" checked> Thingiverse</label>
             <span>(MakerWorld e Thingiverse abrem o Chrome do perfil escolhido no topo)</span></div>
           <div class="row small" style="margin:6px 0"><label class="chk"><input type="checkbox" id="mshow" checked> Mostrar o navegador durante a busca</label>
             <span class="mut">Desligado, o Chrome roda escondido (headless). Ligado, você acompanha a busca na janela e resolve verificações. Precisa de um perfil escolhido no topo.</span></div>

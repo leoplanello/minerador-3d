@@ -195,7 +195,7 @@ def test_onboarding_primeira_abertura_e_tour(gui, tmp_path):
         page.wait_for_timeout(1400)
         assert page.locator("#tour-tip").count() == 0  # o tour não abre por cima do assistente
         page.click("[data-obnext]")
-        assert "Ferramentas" in page.inner_text("#ob h2") and "OrcaSlicer" in page.inner_text("#ob")
+        assert "Ferramentas" in page.inner_text("#ob h2") and "Bambu Studio" in page.inner_text("#ob")
         page.click("[data-obnext]")  # contas
         page.click("[data-obnext]")  # custos
         page.wait_for_selector("[data-oc=filamento_rs_kg]")

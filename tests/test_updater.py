@@ -145,7 +145,7 @@ def test_sha_do_fornecedor_em_dois_formatos(monkeypatch):
     assert ti.expected_sha(ti.MANIFEST["blender"]["sources"][0]) == "b" * 64
     monkeypatch.setattr(ti, "_open", lambda url: Resp(("c" * 64).encode()))
     assert ti.expected_sha(ti.MANIFEST["ffmpeg"]["sources"][0]) == "c" * 64
-    assert ti.expected_sha(ti.MANIFEST["orcaslicer"]["sources"][0]) == ti.MANIFEST["orcaslicer"]["sources"][0]["sha256"]
+    assert ti.expected_sha(ti.MANIFEST["bambustudio"]["sources"][0]) == ti.MANIFEST["bambustudio"]["sources"][0]["sha256"]
     monkeypatch.setattr(ti, "_open", lambda url: Resp(b"sem hash aqui"))
     with pytest.raises(ValueError):
         ti.expected_sha(ti.MANIFEST["ffmpeg"]["sources"][0])

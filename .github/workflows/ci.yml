@@ -15,7 +15,7 @@ jobs:
           python-version: "3.13"
           cache: pip
       - run: pip install -r requirements.txt pytest
-      - name: Testes (os que precisam de OrcaSlicer, Blender ou ffmpeg se pulam sozinhos)
+      - name: Testes (os que precisam de Bambu Studio, Blender ou ffmpeg se pulam sozinhos)
         run: python -m pytest tests -q
 
   empacotar:

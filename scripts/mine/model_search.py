@@ -19,9 +19,9 @@ PRINTABLES_MEDIA = "https://media.printables.com/"
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
 MODEL_EXT = {".3mf", ".stl"}
 MAX_MODEL = 200 * 1024 * 1024
-SITES = {
-    "printables": "Printables",
+SITES = {  # a ordem é a de preferência (impressora Bambu Lab: MakerWorld primeiro)
     "makerworld": "MakerWorld",
+    "printables": "Printables",
     "thingiverse": "Thingiverse",
 }
 # páginas de busca dos sites que exigem navegador e como reconhecer o link de um modelo nelas
@@ -152,7 +152,7 @@ def search_browser(q, profile, sites, limit=8, on_captcha=lambda paused, kind="c
     return results, notes
 
 
-def search(q, profile=None, sites=("printables", "makerworld", "thingiverse"), limit=8, on_captcha=lambda paused, kind="captcha": None):
+def search(q, profile=None, sites=tuple(SITES), limit=8, on_captcha=lambda paused, kind="captcha": None):
     """(resultados, avisos). Printables sempre; os outros só com perfil do Chrome escolhido."""
     q = re.sub(r"\s+", " ", q).strip()[:100]
     if len(q) < 2:
@@ -170,7 +170,7 @@ def search(q, profile=None, sites=("printables", "makerworld", "thingiverse"), l
         notes += n
     elif browser_sites:
         notes.append("MakerWorld e Thingiverse precisam de um perfil do Chrome escolhido no topo da tela")
-    return results, notes
+    return sorted(results, key=lambda r: list(SITES).index(r["source"])), notes
 
 
 def unzip_model(name, data):

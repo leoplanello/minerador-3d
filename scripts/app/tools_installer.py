@@ -1,4 +1,4 @@
-"""Baixa e instala OrcaSlicer, Blender e ffmpeg em TOOLS (%LOCALAPPDATA%\\Minerador3D\\tools quando instalado), com progresso e conferência de SHA-256."""
+"""Baixa e instala Bambu Studio, Blender e ffmpeg em TOOLS (%LOCALAPPDATA%\\Minerador3D\\tools quando instalado), com progresso e conferência de SHA-256."""
 import hashlib
 import re
 import shutil
@@ -15,9 +15,9 @@ HOSTS = ("download.blender.org", "www.gyan.dev", "github.com", "githubuserconten
 # Cada ferramenta tem uma ou mais fontes, tentadas em ordem. Em cada fonte, o sha256 vem fixo (quando o fornecedor publica no release)
 # ou de um arquivo de checksums ao lado do download (sha256_url; sha_name escolhe a linha certa quando o arquivo lista vários).
 MANIFEST = {
-    "orcaslicer": dict(label="OrcaSlicer 2.4.2", size_mb=171, mode="strip", exe="orca-slicer.exe", dest="orcaslicer", sources=[
-        dict(url="https://github.com/OrcaSlicer/OrcaSlicer/releases/download/v2.4.2/OrcaSlicer_Windows_V2.4.2_x64_portable.zip",
-             sha256="feba3009dfb9d268779cca5758a1a5bc3b7d0722bf8fa48d5c57340de975d6be")]),
+    "bambustudio": dict(label="Bambu Studio 2.8.2", size_mb=473, mode="strip", exe="bambu-studio.exe", dest="bambustudio", sources=[
+        dict(url="https://github.com/bambulab/BambuStudio/releases/download/v02.08.02.61/Bambu_Studio_win-v02.08.02.61-20260820225108.zip",
+             sha256="3faaa194a90a2e7defa39a6a63f5a654b8cdb762c6a98556cf771fba582229f5")]),
     "blender": dict(label="Blender 4.2.3", size_mb=383, mode="keep", exe="blender.exe", dest="blender", sources=[
         dict(url="https://download.blender.org/release/Blender4.2/blender-4.2.3-windows-x64.zip",
              sha256_url="https://download.blender.org/release/Blender4.2/blender-4.2.3.sha256", sha_name="blender-4.2.3-windows-x64.zip")]),

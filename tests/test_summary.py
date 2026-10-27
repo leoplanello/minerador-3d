@@ -83,4 +83,4 @@ def test_tempo_de_cada_etapa_pelo_gatilho(tmp_path, monkeypatch):
 def test_saude_lista_ferramentas(monkeypatch, tmp_path):
     _loja(tmp_path, monkeypatch)
     h = server.health()
-    assert set(h) >= {"orca", "blender", "ffmpeg", "chrome", "claude", "profiles", "ml", "costs_confirmed", "business"}
+    assert set(h) >= {"slicer", "blender", "ffmpeg", "chrome", "claude", "profiles", "ml", "costs_confirmed", "business"}

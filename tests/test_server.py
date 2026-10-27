@@ -50,8 +50,8 @@ def test_modelo_recusa_extensao_vazio_e_link_ruim(tmp_path, monkeypatch):
 
 def test_fatiar_fluxo_completo(tmp_path, monkeypatch):
     import pytest
-    if not server.fatiar.ORCA.exists():
-        pytest.skip("OrcaSlicer portátil não instalado")
+    if not server.fatiar.SLICER.exists():
+        pytest.skip("Bambu Studio portátil não instalado")
     _produto(tmp_path, monkeypatch)
     monkeypatch.setattr(server, "ROOT", tmp_path)  # depois do init(), que lê o schema da raiz real
     server.run_slice(1)  # sem modelo ainda
