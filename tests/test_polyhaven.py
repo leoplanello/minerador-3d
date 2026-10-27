@@ -30,13 +30,13 @@ def test_baixa_registra_origem_e_nao_repete(tmp_path):
     fetch = lambda url, md5, dst: (baixados.append(url), dst.parent.mkdir(parents=True, exist_ok=True), dst.write_bytes(b"x"))
     reg = ph.ensure(tmp_path, get=fake_get, fetch=fetch)
     assert set(reg) == set(ph.ASSETS) and ph.available(tmp_path)
-    r = reg["Sofa_01"]
-    assert r["license"] == "CC0 1.0" and r["authors"] == ["Fulano"] and r["page"] == "https://polyhaven.com/a/Sofa_01" and r["files"][0]["url"].startswith("https://x/")
+    r = reg["modern_wooden_cabinet"]
+    assert r["license"] == "CC0 1.0" and r["authors"] == ["Fulano"] and r["page"] == "https://polyhaven.com/a/modern_wooden_cabinet" and r["files"][0]["url"].startswith("https://x/")
     n = len(baixados)
     ph.ensure(tmp_path, get=fake_get, fetch=fetch)
     assert len(baixados) == n  # tudo em disco: não baixa de novo
     texto = ph.credits_markdown(reg)
-    assert "CC0" in texto and "https://polyhaven.com/a/Sofa_01" in texto and "md5 mg" in texto
+    assert "CC0" in texto and "https://polyhaven.com/a/modern_wooden_cabinet" in texto and "md5 mg" in texto
 
 
 def test_md5_errado_nao_grava(tmp_path, monkeypatch):

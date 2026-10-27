@@ -11,15 +11,33 @@ from paths import TOOLS
 API = "https://api.polyhaven.com"
 UA = "minerador-3d (github.com/leoplanello/minerador-3d)"
 ROOT = TOOLS / "polyhaven"
-# id -> (tipo, para que serve). 1k basta: a sala sai desfocada atrás da peça.
-ASSETS = {
-    "brown_photostudio_05": ("hdri", "luz natural e reflexos de ambiente interno"),
-    "plastered_wall_04": ("texture", "parede da sala"),
-    "laminate_floor_02": ("texture", "piso da sala"),
-    "Sofa_01": ("model", "sofá encostado na parede"),
-    "side_table_01": ("model", "mesa lateral"),
-    "potted_plant_01": ("model", "vaso de planta no canto"),
+# Três ambientes, escolhidos pelo tipo de produto (render.room_for). wall/floor = (textura, ladrilho em mm, tom que multiplica a cor ou None);
+# hdri = (nome, giro em graus, força); support = o móvel baixo onde o produto fica ou acima do qual ele é fixado (asset, x, y, giro);
+# items = objetos de vida real sobre o móvel, fora do foco (asset, x, giro); extras = móveis no chão (asset, x, y, giro); door_x = onde fica o vão da porta.
+ROOMS = {
+    "sala": dict(label="Sala", wall=("painted_plaster_wall", 2400, (1.0, 0.95, 0.86)), floor=("herringbone_parquet", 1000, None), hdri=("reading_room", 200, 1.5),
+                 support=("modern_wooden_cabinet", 0, -270, 0), items=[("ceramic_vase_03", -950, 0), ("book_encyclopedia_set_01", -480, 0), ("potted_plant_04", 900, 0), ("standing_picture_frame_01", 520, -8)],
+                 extras=[("modern_arm_chair_01", 2000, -700, -35)], door_x=-2350),
+    "entrada": dict(label="Entrada", wall=("castle_brick_02_white", 1500, (1.0, 0.97, 0.92), 0.42), floor=("floor_tiles_02", 900, None), hdri=("entrance_hall", 0, 1.3),
+                    support=("painted_wooden_cabinet", 0, -310, 0), items=[("planter_pot_clay", -380, 0), ("wicker_basket_02", 400, 0)], extras=[], door_x=2000),
+    "escritorio": dict(label="Escritório", wall=("painted_plaster_wall", 2400, (0.82, 0.90, 0.86)), floor=("wooden_floor_02", 1200, None), hdri=("small_empty_room_3", 120, 1.6),
+                       support=("wooden_table_02", 0, -360, 0), items=[("alarm_clock_01", -430, 15), ("potted_plant_04", 440, 0)],
+                       extras=[("dining_chair_02", 650, -820, 165)], door_x=-1900),
 }
+
+
+def _assets():
+    out = {}
+    for r in ROOMS.values():
+        out[r["wall"][0]] = ("texture", "parede")
+        out[r["floor"][0]] = ("texture", "piso")
+        out[r["hdri"][0]] = ("hdri", "luz natural e reflexos")
+        for a in [r["support"][0]] + [x[0] for x in r["items"]] + [x[0] for x in r["extras"]]:
+            out[a] = ("model", "móvel ou objeto de decoração")
+    return out
+
+
+ASSETS = _assets()  # id -> (tipo, uso); tudo em 1k, que basta: a sala sai desfocada atrás da peça
 TEXTURE_MAPS = {"Diffuse": "diff", "nor_gl": "nor", "Rough": "rough"}
 RES = "1k"
 

@@ -181,7 +181,7 @@ def make_camera_video(frames, script, out, voice=None, cfg=None, music=None):
     box = ":box=1:boxcolor=black@0.5:boxborderw=22" if cfg["caption_box"] else ""
     out.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory() as tmp:
-        chain, parts = f"[0:v]scale={W}:{H},setsar=1", captions(script, min(4, max(1, len(re.findall(r"[.!?]", script)))), 10 ** 6)
+        chain, parts = f"[0:v]scale={W}:{H},setsar=1,vignette=PI/5,noise=alls=7:allf=t", captions(script, min(4, max(1, len(re.findall(r"[.!?]", script)))), 10 ** 6)
         if cfg["captions"]:
             for i, cap in enumerate(parts):
                 cap, fs = fit_caption(cap, W, max_h, round(cfg["caption_size"] * W / 1080))

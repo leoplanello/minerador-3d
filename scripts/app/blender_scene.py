@@ -161,7 +161,7 @@ ctx.append(obj_ctx)
 PH = Path(cfg["polyhaven"]) if cfg.get("polyhaven") else None
 
 
-def tex_material(name, folder, tile, axes):
+def tex_material(name, folder, tile, axes, tint=None, wash=0.0):
     """Material com as texturas do Poly Haven (cor, rugosidade, normal) projetadas pela posição no mundo, em mm: tile = tamanho real de um ladrilho."""
     m = bpy.data.materials.new(name)
     m.use_nodes = True
@@ -180,7 +180,22 @@ def tex_material(name, folder, tile, axes):
             n.image.colorspace_settings.name = "Non-Color"
         nt.links.new(mp.outputs[0], n.inputs["Vector"])
         return n
-    nt.links.new(image("diff.jpg", True).outputs["Color"], b.inputs["Base Color"])
+    diff = image("diff.jpg", True).outputs["Color"]
+    if wash:  # caiação: mistura a textura com cal, o relevo e a junta continuam
+        lime = nt.nodes.new("ShaderNodeMix")
+        lime.data_type = "RGBA"
+        lime.inputs["Factor"].default_value = wash
+        lime.inputs["B"].default_value = (0.86, 0.84, 0.80, 1)
+        nt.links.new(diff, lime.inputs["A"])
+        diff = lime.outputs["Result"]
+    if tint:  # tom da pintura/superfície multiplicado sobre a textura (a textura continua mandando no relevo e na variação)
+        mix = nt.nodes.new("ShaderNodeMix")
+        mix.data_type, mix.blend_type = "RGBA", "MULTIPLY"
+        mix.inputs["Factor"].default_value = 1.0
+        mix.inputs["B"].default_value = (*tint, 1)
+        nt.links.new(diff, mix.inputs["A"])
+        diff = mix.outputs["Result"]
+    nt.links.new(diff, b.inputs["Base Color"])
     nt.links.new(image("rough.jpg", False).outputs["Color"], b.inputs["Roughness"])
     nm = nt.nodes.new("ShaderNodeNormalMap")
     nt.links.new(image("nor.jpg", False).outputs["Color"], nm.inputs["Color"])
@@ -223,10 +238,47 @@ def prim(kind, loc, scale, mat, rot=(0, 0, 0), name="prop", **kw):
     return o
 
 
-def make_prop(kind, lo_, hi_):
-    """Objeto que a peça segura, feito de primitivas (o Poly Haven não tem chaves nem roteador). lo_/hi_ = caixa da peça já na parede. 'chaves': argola e chaves
-    penduradas na frente da peça; 'roteador': aparelho em pé, apoiado na peça. Posição por heurística: confira a imagem."""
-    cx, front, top, bottom = (lo_.x + hi_.x) / 2, lo_.y, hi_.z, lo_.z
+def hero_objs():
+    return [o for o in HERO]
+
+
+def modem_material():
+    m, b = make_mat("modem", 0.42, Base_Color=(0.022, 0.022, 0.026, 1))
+    nt = m.node_tree
+    tc, chk, bm = nt.nodes.new("ShaderNodeTexCoord"), nt.nodes.new("ShaderNodeTexChecker"), nt.nodes.new("ShaderNodeBump")
+    chk.inputs["Scale"].default_value = 0.28  # grade de ventilação: um quadrado a cada ~3,5 mm
+    bm.inputs["Strength"].default_value = 0.7
+    nt.links.new(tc.outputs["Object"], chk.inputs["Vector"])
+    nt.links.new(chk.outputs["Fac"], bm.inputs["Height"])
+    nt.links.new(bm.outputs["Normal"], b.inputs["Normal"])
+    return m
+
+
+def make_modem(cx, bottom, w=190, d=46, h=235):
+    """Aparelho de fibra em pé (bloco preto com grade de ventilação e LED), encostado na parede em y = 0. Medidas de um modem comum (o Poly Haven não tem roteador)."""
+    out = [prim("cube", (cx, -d / 2 - 1, bottom + h / 2), (w / 2, d / 2, h / 2), modem_material(), name="modem", size=2)]
+    out[-1].modifiers.new("chanfro", "BEVEL").width = 3.5
+    led = solid("led", (0.05, 0.9, 0.25), 0.3)
+    led.node_tree.nodes["Principled BSDF"].inputs["Emission Color"].default_value = (0.1, 1, 0.3, 1)
+    led.node_tree.nodes["Principled BSDF"].inputs["Emission Strength"].default_value = 3
+    out.append(prim("cube", (cx - w / 2 + 16, -d - 1.6, bottom + h - 24), (5, 1, 5), led, name="led", size=1))
+    green = solid("porta", (0.12, 0.45, 0.14), 0.4)
+    for k in range(4):  # as portas de rede na lateral, como no aparelho do anúncio
+        out.append(prim("cube", (cx - w / 2 - 0.6, -d / 2 - 1, bottom + h * 0.46 - k * 18), (1.2, 7, 6), solid("porta-rede", (0.9, 0.7, 0.1) if k else (0.12, 0.45, 0.14), 0.4), name="led", size=1))
+    return out
+
+
+def top_face(o):
+    """Maior face voltada para cima da peça já montada (a prateleira): centro no mundo. Onde se apoiam objetos."""
+    m3 = o.matrix_world.to_3x3()
+    best = max(((p.area, o.matrix_world @ p.center) for p in o.data.polygons if (m3 @ p.normal).z > 0.95), key=lambda t: t[0], default=None)
+    return best[1] if best else None
+
+
+def make_prop(kind, lo_, hi_, shelf):
+    """Objetos de vida real que acompanham a peça, de primitivas (o Poly Haven não tem chaves nem roteador). 'chaves': chaveiro pendurado e, se há prateleira,
+    um estojo de fone e uma chave de carro sobre ela. Posição por heurística: confira a imagem."""
+    cx, front, top = lo_.x + 0.64 * (hi_.x - lo_.x), lo_.y, hi_.z
     out = []
     if kind == "chaves":
         metal = solid("chave", (0.78, 0.74, 0.62), 0.28, 1.0)
@@ -241,61 +293,104 @@ def make_prop(kind, lo_, hi_):
             bx, bz = hx - math.sin(a) * (ln / 2 + 6.5), hz - math.cos(a) * (ln / 2 + 6.5)
             out.append(prim("cube", (bx, y0, bz), (2.6, 0.8, ln / 2), metal, rot=(0, math.radians(-ang), 0), name="lamina-chave", size=2))
             for tooth in range(4):  # dentes da chave
-                tz = bz - ln / 2 + 3 + tooth * 7
-                out.append(prim("cube", (bx + 2.6 + (tooth % 2) * 0.8, y0, tz), (1.0, 0.8, 1.6), metal, name="lamina-chave", size=2))
+                out.append(prim("cube", (bx + 2.6 + (tooth % 2) * 0.8, y0, bz - ln / 2 + 3 + tooth * 7), (1.0, 0.8, 1.6), metal, name="lamina-chave", size=2))
         out.append(prim("cube", (cx + 16, ay + 4, az - 40), (22, 7, 36), fob, rot=(0, math.radians(-10), 0), name="controle", size=1))
         out[-1].modifiers.new("chanfro", "BEVEL").width = 2.5
-    elif kind == "roteador":
-        body = solid("roteador", (0.025, 0.025, 0.03), 0.45)
-        w, d, h = 175, 38, 215
-        out.append(prim("cube", (cx, front - d / 2 - 2, bottom + h / 2 + 10), (w / 2, d / 2, h / 2), body, name="roteador", size=2))
-        out[-1].modifiers.new("chanfro", "BEVEL").width = 3
-        led = solid("led", (0.05, 0.9, 0.2), 0.3)
-        out.append(prim("cube", (cx - w / 2 + 14, front - d - 2.4, bottom + h - 22), (5, 1, 5), led, name="led", size=1))
+        if shelf is not None:  # estojo de fone e chave de carro na bandeja, como no anúncio
+            case = solid("estojo", (0.015, 0.015, 0.018), 0.25)
+            bx0 = lo_.x + 0.22 * (hi_.x - lo_.x)
+            out.append(prim("cube", (bx0, shelf.y - 4, shelf.z + 11), (31, 14, 11), case, rot=(0, 0, math.radians(8)), name="estojo", size=2))
+            out[-1].modifiers.new("chanfro", "BEVEL").width = 6
+            out.append(prim("cube", (bx0 + 62, shelf.y + 2, shelf.z + 5), (50, 22, 7), fob, rot=(0, 0, math.radians(-14)), name="controle", size=1))
+            out[-1].modifiers.new("chanfro", "BEVEL").width = 3
     return out
 
 
+def trim(door_x):
+    """Rodapé, cantoneira de teto e vão de porta com batente e folha (pintura branca acetinada): as marcas de uma casa de verdade nas vistas abertas."""
+    white = solid("pintura-branca", (0.88, 0.87, 0.84), 0.38)
+    leaf = solid("porta", (0.82, 0.81, 0.77), 0.4)
+    ctx.append(prim("cube", (0, -7.5, 55), (12000, 7.5, 55), white, name="rodape", size=2))
+    ctx.append(prim("cube", (0, -45, 2640), (12000, 45, 55), white, name="cantoneira", size=2))
+    for dx in (-490, 490):
+        ctx.append(prim("cube", (door_x + dx, -12, 1060), (38, 12, 1060), white, name="batente", size=2))
+    ctx.append(prim("cube", (door_x, -12, 2135), (528, 12, 38), white, name="batente", size=2))
+    ctx.append(prim("cube", (door_x, -4, 1040), (452, 4, 1040), leaf, name="folha", size=2))
+    ctx.append(prim("cylinder", (door_x + 380, -22, 1000), (1, 1, 1), solid("macaneta", (0.7, 0.7, 0.72), 0.25, 1.0), rot=(math.radians(90), 0, 0), name="macaneta", radius=14, depth=60))
+
+
 def room_scene():
-    """Parede e piso com texturas reais, sofá, mesa lateral e planta em escala real, HDRI de ambiente. Devolve o ponto que a câmera mira (a peça)."""
-    wall = tex_material("sala-parede", PH / "plastered_wall_04", 3200, ("X", "Z"))
-    floor = tex_material("sala-piso", PH / "laminate_floor_02", 1700, ("X", "Y"))
-    ctx.append(plane((0, 0.5, 2500), (math.radians(90), 0, 0), (24000, 5000), wall, "parede-sala"))  # a câmera nunca vê a borda: parede, piso e teto passam do quadro
+    """Ambiente com materiais PBR do Poly Haven (parede, piso), móvel de apoio com objetos, rodapé, porta, HDRI de interior e luz de janela.
+    Devolve o ponto que a câmera mira. A peça fica fixada na parede acima do móvel ou, para aparelhos, em pé sobre ele."""
+    global HERO
+    S = cfg["sala"]
+    wall = tex_material("parede", PH / S["wall"][0], S["wall"][1], ("X", "Z"), S["wall"][2], S["wall"][3] if len(S["wall"]) > 3 else 0.0)
+    floor = tex_material("piso", PH / S["floor"][0], S["floor"][1], ("X", "Y"), S["floor"][2])
+    ctx.append(plane((0, 0.5, 2500), (math.radians(90), 0, 0), (24000, 5000), wall, "parede-sala"))  # parede e piso passam do quadro: a câmera nunca vê a borda
     ctx.append(plane((0, -9000, 0), (0, 0, 0), (24000, 18000), floor, "piso-sala"))
-    sofa, sofa_top = furniture("Sofa_01", 300, -520, 0)
-    plant, _ = furniture("potted_plant_01", 2150, -400, 0)
-    ctx.extend(sofa + plant)
-    if ctx_kind == "mesa":  # a peça sobre a mesa lateral, à frente do sofá
-        tbl, top = furniture("side_table_01", -150, -900, 0)
-        ctx.extend(tbl)
-        obj_ctx.location = (-150, -900, top)
-        bpy.context.view_layer.update()
-        lo2, hi2 = bounds(obj_ctx)
-        obj_ctx.location += Vector((-150 - (lo2.x + hi2.x) / 2, -900 - (lo2.y + hi2.y) / 2, top - lo2.z))
-    else:
-        tbl, _ = furniture("side_table_01", -1550, -300, 0)
-        ctx.extend(tbl)
-        up = up_direction(obj, back_ax)
-        obj_ctx.rotation_mode = "QUATERNION"
-        obj_ctx.rotation_quaternion = Matrix((back.cross(up), back, up)).to_quaternion()
-        obj_ctx.location = (0, 0, 0)
-        bpy.context.view_layer.update()
-        clo, chi = bounds(obj_ctx)
-        obj_ctx.location = Vector((-(clo.x + chi.x) / 2, -chi.y, 1250 - (clo.z + chi.z) / 2))  # costas na parede, centro a 1,25 m do piso
+    trim(S["door_x"])
+    sa, sx, sy, sr = S["support"]
+    sup, sup_top = furniture(sa, sx, sy, sr)
+    ctx.extend(sup)
+    for asset, x, rot in S["items"]:  # objetos de vida real sobre o móvel, fora do foco
+        o, _ = furniture(asset, x, sy, rot, z=sup_top)
+        ctx.extend(o)
+    for asset, x, y, rot in S["extras"]:
+        o, _ = furniture(asset, x, y, rot)
+        ctx.extend(o)
+    up = up_direction(obj, back_ax)
+    rotq = Matrix((back.cross(up), back, up)).to_quaternion()
+    obj_ctx.rotation_mode = "QUATERNION"
+    obj_ctx.rotation_quaternion = rotq
+    obj_ctx.location = (0, 0, 0)
     bpy.context.view_layer.update()
     clo, chi = bounds(obj_ctx)
-    if cfg.get("objeto"):
-        ctx.extend(make_prop(cfg["objeto"], clo, chi))
+    stand = cfg.get("montagem") == "sobre_movel"
+    legs = [obj_ctx]
+    if stand:  # aparelho em pé sobre o móvel, com a peça de cada lado (o par: a peça e a sua imagem espelhada)
+        mw = 190
+        lx = chi.x - clo.x
+        obj_ctx.location = Vector((-(mw / 2 + 3 + lx / 2) - (clo.x + chi.x) / 2, -chi.y, sup_top - clo.z))
+        other = obj_ctx.copy()
+        other.scale.x = -1
+        bpy.context.collection.objects.link(other)
+        other.location = (0, 0, 0)
+        ctx.append(other)
+        bpy.context.view_layer.update()
+        olo, ohi = bounds(other)
+        other.location = Vector(((mw / 2 + 3 + lx / 2) - (olo.x + ohi.x) / 2, -chi.y, sup_top - clo.z))
+        legs.append(other)
+    else:
+        obj_ctx.location = Vector((-(clo.x + chi.x) / 2, -chi.y, max(1250, sup_top + 560) - (clo.z + chi.z) / 2))  # costas na parede, acima do móvel
+    bpy.context.view_layer.update()
+    plo, phi = bounds(legs[0])
+    for o in legs[1:]:
+        a, b = bounds(o)
+        plo, phi = Vector(min(x, y) for x, y in zip(plo, a)), Vector(max(x, y) for x, y in zip(phi, b))
+    props = []
+    if cfg.get("objeto") == "modem":
+        props = make_modem(0, sup_top)
+    elif cfg.get("objeto"):
+        props = make_prop(cfg["objeto"], plo, phi, top_face(obj_ctx))
+    ctx.extend(props)
+    HERO = legs + props
+    # HDRI de interior com janela
+    hn, hrot, hstr = S["hdri"]
     nt = world_ctx.node_tree
     nt.nodes.clear()
-    env, bg, out, tc, mp = (nt.nodes.new(t) for t in ("ShaderNodeTexEnvironment", "ShaderNodeBackground", "ShaderNodeOutputWorld", "ShaderNodeTexCoord", "ShaderNodeMapping"))
-    env.image = bpy.data.images.load(str(next((PH / "brown_photostudio_05").glob("*.hdr"))))
-    mp.inputs["Rotation"].default_value[2] = math.radians(cfg.get("hdri_rot", 200))
-    bg.inputs["Strength"].default_value = 1.6
+    env, bgn, out, tc, mp = (nt.nodes.new(t) for t in ("ShaderNodeTexEnvironment", "ShaderNodeBackground", "ShaderNodeOutputWorld", "ShaderNodeTexCoord", "ShaderNodeMapping"))
+    env.image = bpy.data.images.load(str(next((PH / hn).glob("*.hdr"))))
+    mp.inputs["Rotation"].default_value[2] = math.radians(hrot)
+    bgn.inputs["Strength"].default_value = hstr
     nt.links.new(tc.outputs["Generated"], mp.inputs["Vector"])
     nt.links.new(mp.outputs[0], env.inputs["Vector"])
-    nt.links.new(env.outputs["Color"], bg.inputs["Color"])
-    nt.links.new(bg.outputs[0], out.inputs["Surface"])
-    return (clo + chi) / 2
+    nt.links.new(env.outputs["Color"], bgn.inputs["Color"])
+    nt.links.new(bgn.outputs[0], out.inputs["Surface"])
+    pts = [o.matrix_world @ Vector(c) for o in HERO if o.type == "MESH" for c in o.bound_box]
+    return (Vector((min(p[i] for p in pts) for i in range(3))) + Vector((max(p[i] for p in pts) for i in range(3)))) / 2
+
+
+HERO = []
 wall_m, wall_b = make_mat("parede", 0.95)
 procedural(wall_m, wall_b, 400, [(0.55, 0.50, 0.44), (0.64, 0.59, 0.52)], kind="NOISE", bump=0.05)
 if PH:
@@ -324,34 +419,43 @@ else:
     ctx.append(plane((0, size * 9, size * 5), (math.radians(90), 0, 0), (size * 40, size * 20), wall_m, "fundo"))
     target = center
 
-# luz de janela: sol suave de fora, com caixilho que projeta sombra
-sun_dir = Vector((-0.55, 0.65, -0.55)) if ctx_kind == "parede" else Vector((-0.5, 0.35, -0.8))
-sun_dir.normalize()
-bpy.ops.object.light_add(type="SUN", location=target - sun_dir * size * 8)
-sun = bpy.context.object
-sun.data.energy = ({"soft": 3.0, "normal": 4.5, "strong": 6.5} if PH else {"soft": 1.0, "normal": 1.5, "strong": 2.2})[cfg["light"]]  # na sala o sol da janela faz a sombra de contato
-sun.data.angle = math.radians(6 if PH else 2.5)
-sun.data.color = (1.0, 0.88, 0.72) if PH else (1.0, 0.94, 0.84)
-sun.rotation_euler = sun_dir.to_track_quat("-Z", "Y").to_euler()
-ctx.append(sun)
-q = sun_dir.to_track_quat("-Z", "Y")
-bars = [  # (x, y, largura, altura) no plano da janela, em tamanhos da peça: moldura com cruz
-    (-20, 0, 12, 60), (20, 0, 12, 60), (0, 16, 60, 12), (0, -16, 60, 12), (-1.6, 0, 0.5, 20), (1.4, 0, 0.5, 20), (0, 0.6, 20, 0.5)]
-for ox, oy, w, h in ([] if PH else bars):  # na sala a janela é o HDRI; o caixilho de sombra é só do cenário simples
-    bpy.ops.mesh.primitive_cube_add(size=1)
-    b = bpy.context.object
-    b.location = target - sun_dir * size * 5 + q @ Vector((ox * size - 0.6 * size, oy * size + 0.3 * size, 0))
-    b.rotation_euler = q.to_euler()
-    b.scale = (w * size, h * size, 0.05 * size)
-    b.visible_camera = False  # só projeta sombra, a câmera não vê a "janela"
-    ctx.append(b)
+# luz: na sala, uma janela de área suave e quente (do lado esquerdo da câmera) mais um preenchimento fraco; no cenário simples, sol com caixilho de sombra
+if PH:
+    k = {"soft": 0.6, "normal": 1.0, "strong": 1.5}[cfg["light"]]
+    for loc, size_xy, watts, col in (((-2400, -1500, 1700), (1500, 1900), 5200 * k, (1.0, 0.82, 0.62)), ((2200, -2600, 900), (2400, 1400), 480 * k, (0.85, 0.9, 1.0))):
+        bpy.ops.object.light_add(type="AREA", location=loc)
+        lt = bpy.context.object
+        lt.data.shape, lt.data.size, lt.data.size_y = "RECTANGLE", size_xy[0], size_xy[1]
+        lt.data.energy, lt.data.color = watts * 1000, col
+        aim(lt, target)
+        ctx.append(lt)
+else:
+    sun_dir = Vector((-0.55, 0.65, -0.55)) if ctx_kind == "parede" else Vector((-0.5, 0.35, -0.8))
+    sun_dir.normalize()
+    bpy.ops.object.light_add(type="SUN", location=target - sun_dir * size * 8)
+    sun = bpy.context.object
+    sun.data.energy = {"soft": 1.0, "normal": 1.5, "strong": 2.2}[cfg["light"]]
+    sun.data.angle = math.radians(2.5)
+    sun.data.color = (1.0, 0.94, 0.84)
+    sun.rotation_euler = sun_dir.to_track_quat("-Z", "Y").to_euler()
+    ctx.append(sun)
+    q = sun_dir.to_track_quat("-Z", "Y")
+    bars = [(-20, 0, 12, 60), (20, 0, 12, 60), (0, 16, 60, 12), (0, -16, 60, 12), (-1.6, 0, 0.5, 20), (1.4, 0, 0.5, 20), (0, 0.6, 20, 0.5)]
+    for ox, oy, w, h in bars:
+        bpy.ops.mesh.primitive_cube_add(size=1)
+        b = bpy.context.object
+        b.location = target - sun_dir * size * 5 + q @ Vector((ox * size - 0.6 * size, oy * size + 0.3 * size, 0))
+        b.rotation_euler = q.to_euler()
+        b.scale = (w * size, h * size, 0.05 * size)
+        b.visible_camera = False  # só projeta sombra, a câmera não vê a "janela"
+        ctx.append(b)
 
 if PH:
-    plo, phi = bounds(obj_ctx)
-    part_span = max(phi - plo)
-    props = [o for o in ctx if o.type == "MESH" and o.name.split(".")[0] in ("argola", "cabeca-chave", "lamina-chave", "controle", "roteador", "led")]
-    pts = [o.matrix_world @ Vector(c) for o in [obj_ctx] + props for c in o.bound_box]
-    framed_span = max(max(p[k] for p in pts) - min(p[k] for p in pts) for k in range(3))
+    def span_of(objs):
+        pts = [o.matrix_world @ Vector(c) for o in objs if o.type == "MESH" for c in o.bound_box]
+        return max(max(p[k] for p in pts) - min(p[k] for p in pts) for k in range(3))
+    part_span = span_of(HERO[:2] if cfg.get("montagem") == "sobre_movel" else HERO[:1])
+    framed_span = span_of(HERO)
 scene = bpy.context.scene
 scene.render.engine = "CYCLES" if engine == "CYCLES" else "BLENDER_EEVEE_NEXT"
 if engine == "CYCLES":
