@@ -42,14 +42,16 @@ browser_lock = threading.Lock()
 
 
 def db():
-    c = sqlite3.connect(DB, timeout=30)
+    c = sqlite3.connect(DB, timeout=120)  # o disco fica lento enquanto o Chrome escreve o perfil; esperar é melhor que falhar a leitura da loja
     c.row_factory = sqlite3.Row
+    c.execute("PRAGMA synchronous=NORMAL")  # com WAL, poucas sincronizações no disco e leitores que não travam quem grava
     return c
 
 
 def init():
     DB.parent.mkdir(parents=True, exist_ok=True)
     with db() as c:
+        c.execute("PRAGMA journal_mode=WAL")
         c.executescript((paths.RESOURCES / "db" / "schema.sql").read_text(encoding="utf-8"))
         if "profile" not in [r[1] for r in c.execute("PRAGMA table_info(stores)")]:  # banco criado antes dos perfis
             c.execute("ALTER TABLE stores ADD COLUMN profile TEXT DEFAULT ''")
@@ -513,8 +515,12 @@ def license_note(item):
     return f"{item.get('license') or 'licença não informada'} ({verdict}). Fonte: {item.get('source', '')}"[:500]
 
 
-def model_headless():
-    return bool(get_setting("model_headless", False))  # padrão: o navegador aparece, para você acompanhar a busca
+def browser_headless():
+    """Uma escolha só para todo o Chrome do app (leitura de lojas e busca de modelos). Padrão: a janela aparece, para você acompanhar."""
+    return bool(get_setting("browser_headless", False))
+
+
+model_headless = browser_headless
 
 
 def run_model_search(lid, q, profile, sites, headless=None):
@@ -719,7 +725,7 @@ def run_store_info(ids, profile):
             continue
         try:
             with browser_lock:
-                save_store_info(sid, read_store_info(row["url"], profile, on_captcha=lambda p, kind="captcha": popup(*MANUAL[kind]) if p else None))
+                save_store_info(sid, read_store_info(row["url"], profile, on_captcha=lambda p, kind="captcha": popup(*MANUAL[kind]) if p else None, headless=browser_headless()))
         except Exception as e:
             with lock, db() as c:
                 c.execute("UPDATE stores SET msg=? WHERE id=?", (str(e)[:300], sid))
@@ -752,7 +758,7 @@ def run_store(store_id, url, profile):
         with browser_lock:  # o perfil do Chrome só abre uma vez; lojas rodam em fila
             setstatus("running")
             read_store(url, profile, on_captcha=lambda p, kind="captcha": setstatus("captcha" if p else "running", kind if p else ""),
-                       on_listing=on_listing, on_store=on_store)
+                       on_listing=on_listing, on_store=on_store, headless=browser_headless())
         setstatus("done")
         with db() as c:
             n = c.execute("SELECT COUNT(*) FROM listings WHERE store_id=? AND is_3d=1 AND status='new'", (store_id,)).fetchone()[0]
@@ -1029,6 +1035,8 @@ class H(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
             return
+        if path == "/api/browser":
+            return self._json(dict(headless=browser_headless()))
         if path == "/api/model/search":
             q = parse_qs(url.query)
             lid = int(q.get("id", ["0"])[0])
@@ -1151,7 +1159,7 @@ class H(BaseHTTPRequestHandler):
                     if len(q) < 2 or not sites:
                         raise ValueError("digite o que buscar")
                     if "headless" in data:
-                        put_setting("model_headless", bool(data["headless"]))
+                        put_setting("browser_headless", bool(data["headless"]))
                     threading.Thread(target=run_model_search, args=(lid, q, profile, sites), daemon=True).start()
                 elif path == "/api/model/get":
                     get_printables_model(lid, str(data["model_id"]), str(data["file_id"]), str(data.get("title", "")), str(data.get("url", "")), str(data.get("license", "")), model_info(data))
@@ -1218,6 +1226,9 @@ class H(BaseHTTPRequestHandler):
                 return self._json(dict(error="já tem um download em andamento"), 400)
             threading.Thread(target=run_tool_install, args=(name,), daemon=True).start()
             return self._json(dict(ok=True))
+        if path == "/api/browser":
+            put_setting("browser_headless", bool(data.get("headless")))
+            return self._json(dict(headless=browser_headless()))
         if path == "/api/open":
             try:
                 profile = pick_profile(data.get("profile"))

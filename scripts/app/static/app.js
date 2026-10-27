@@ -51,6 +51,8 @@ const VIEWS = {
   lojas: {
     mount: () => `<div class="card"><h2>Adicionar lojas</h2>
         <textarea id="urls" placeholder="Cole aqui uma ou mais URLs de lojas do Mercado Livre, uma por linha.&#10;Ex.: https://www.mercadolivre.com.br/pagina/nome_da_loja"></textarea>
+        <div class="row small" style="margin-top:8px"><label class="chk"><input type="checkbox" class="bshow" checked> Mostrar o navegador durante a leitura</label>
+          <span class="mut">O Chrome do app abre à vista e você acompanha (e resolve captchas). Desligado, roda escondido.</span></div>
         <div class="row" style="margin-top:10px"><span id="urlhint" class="small mut grow"></span><button id="add" class="pri" disabled>${ic('plus')}Analisar lojas</button></div></div>
       <div class="card"><div class="card-h"><h2>Lojas</h2><button id="sinfo" class="sm" title="Abre o Chrome e atualiza nome, logo e dados de cada loja, sem reler os anúncios">${ic('refresh')}Atualizar dados das lojas</button></div><div id="stores" class="stores"></div></div>`,
     bind: () => { $('sinfo').onclick = () => refreshInfo('all'); $('urls').oninput = onUrls; $('add').onclick = () => addStores(validUrls()); onUrls(); },
@@ -727,3 +729,10 @@ document.body.addEventListener('click', e => { const g = e.target.closest('[data
 (() => { const bar = document.querySelector('.testbar'); let off = false; try { off = localStorage.getItem('testbar') === '0'; } catch (e) {}
   if (off) bar.hidden = true; bar.insertAdjacentHTML('beforeend', '<button class="x" title="Fechar este aviso" aria-label="Fechar">×</button>');
   bar.querySelector('.x').onclick = () => { bar.hidden = true; try { localStorage.setItem('testbar', '0'); } catch (e) {} }; })();
+
+// uma escolha só (Chrome visível ou oculto) para leitura de lojas e busca de modelos
+const bshows = () => document.querySelectorAll('.bshow, #mshow');
+fetch('/api/browser').then(r => r.json()).then(b => { window.BHEAD = b.headless; });
+document.body.addEventListener('change', e => { const t = e.target.closest('.bshow, #mshow'); if (!t) return; window.BHEAD = !t.checked; post('/api/browser', {headless: !t.checked});
+  bshows().forEach(x => x.checked = t.checked); toast(t.checked ? 'O navegador vai aparecer durante a leitura e a busca' : 'O navegador vai rodar escondido'); });
+setInterval(() => { if (window.BHEAD != null) bshows().forEach(x => { if (x !== document.activeElement) x.checked = !window.BHEAD; }); }, 1000);

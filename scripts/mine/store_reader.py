@@ -28,6 +28,15 @@ def launch_ctx(p, profile, headless=False, **kw):
                                                 ignore_default_args=["--enable-automation"], args=["--disable-blink-features=AutomationControlled"], **kw)
 
 
+def front(ctx, headless):
+    """Com a janela visível, traz o Chrome do app para a frente, para a pessoa acompanhar."""
+    if not headless:
+        try:
+            (ctx.pages[0] if ctx.pages else ctx.new_page()).bring_to_front()
+        except Exception:
+            pass
+
+
 def chrome_path():
     for c in (os.environ.get("CHROME_PATH"), r"C:\Program Files\Google\Chrome\Application\chrome.exe",
               r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe", os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe")):
@@ -112,12 +121,13 @@ def list_profiles():
     return sorted(d.name for d in PROFILES_DIR.iterdir() if d.is_dir()) if PROFILES_DIR.exists() else []
 
 
-def read_store(url, profile, limit=20, on_captcha=lambda paused, kind="captcha": None, on_listing=lambda d: None, on_store=lambda d: None):
+def read_store(url, profile, limit=20, on_captcha=lambda paused, kind="captcha": None, on_listing=lambda d: None, on_store=lambda d: None, headless=False):
     """on_listing recebe dict(url,title,price,material,is_3d,sold,reviews,rank) por anúncio lido."""
     if profile not in list_profiles():  # também barra '../' vindo da API
         raise ValueError(f"perfil desconhecido: {profile}")
     with sync_playwright() as p:
-        ctx = launch_ctx(p, profile)
+        ctx = launch_ctx(p, profile, headless=headless)
+        front(ctx, headless)
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
         try:
             _goto(page, url, on_captcha)
@@ -147,12 +157,13 @@ def read_store(url, profile, limit=20, on_captcha=lambda paused, kind="captcha":
             ctx.close()
 
 
-def read_store_info(url, profile, on_captcha=lambda paused, kind="captcha": None):
+def read_store_info(url, profile, on_captcha=lambda paused, kind="captcha": None, headless=False):
     """Lê só a página da loja (nome, logo, reputação, vendas...), sem abrir anúncio. Devolve um dict só com o que achou."""
     if profile not in list_profiles():
         raise ValueError(f"perfil desconhecido: {profile}")
     with sync_playwright() as p:
-        ctx = launch_ctx(p, profile)
+        ctx = launch_ctx(p, profile, headless=headless)
+        front(ctx, headless)
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
         try:
             _goto(page, url, on_captcha)

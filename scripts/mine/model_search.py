@@ -12,7 +12,7 @@ from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 
-from store_reader import PROFILES_DIR, _captcha, _wait_human, list_profiles, launch_ctx
+from store_reader import PROFILES_DIR, _captcha, _wait_human, front, list_profiles, launch_ctx
 
 PRINTABLES_API = "https://api.printables.com/graphql/"
 PRINTABLES_MEDIA = "https://media.printables.com/"
@@ -126,6 +126,7 @@ def search_browser(q, profile, sites, limit=8, on_captcha=lambda paused, kind="c
     results, notes = [], []
     with sync_playwright() as p:
         ctx = launch_ctx(p, profile, headless=headless)
+        front(ctx, headless)
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
         try:
             for site in sites:
