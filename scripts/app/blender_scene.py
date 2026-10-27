@@ -288,7 +288,7 @@ if engine == "CYCLES":
     scene.cycles.denoiser = "OPENIMAGEDENOISE"
 else:
     scene.eevee.taa_render_samples = cfg["samples_eevee"]
-scene.render.resolution_x = scene.render.resolution_y = cfg["size"]
+scene.render.resolution_x, scene.render.resolution_y = cfg.get("res") or (cfg["size"], cfg["size"])  # "res" = [largura, altura] dos quadros do vídeo
 scene.render.image_settings.file_format = "JPEG"
 scene.render.image_settings.quality = 92
 scene.view_settings.view_transform = "Standard"
@@ -298,7 +298,8 @@ cam = bpy.context.object
 scene.camera = cam
 cam.data.lens = 50
 cam.data.clip_start, cam.data.clip_end = 1, 100000  # a cena é em mm: o padrão (100) cortaria a sala
-for i, (name, az, el, zoom) in enumerate(cfg["views"], 1):
+for i, (name, az, el, zoom, *rest) in enumerate(cfg["views"], 1):
+    t = rest[0] if rest else None  # vídeo: 0 = câmera aberta, 1 = de perto; a posição é contínua entre os quadros
     in_use = name.startswith("uso")
     for o in studio:
         o.hide_render = in_use
@@ -324,5 +325,13 @@ for i, (name, az, el, zoom) in enumerate(cfg["views"], 1):
     cam.data.dof.use_dof = in_use  # fundo desfocado dá a cara de foto de ambiente
     cam.data.dof.focus_distance = (cam.location - focus).length
     cam.data.dof.aperture_fstop = 4.0 if wide else 2.0 if PH else 2.8
+    if t is not None and in_use:  # trajetória do vídeo: afasta-se menos a cada quadro, lente e abertura acompanham
+        far, near = min(max(size * 12, 1200), 2600) if PH else size * cfg["dist"], size * cfg["dist"] * 0.6
+        dist = far + (near - far) * t
+        cam.location = focus + Vector((dist * math.cos(e) * math.cos(a), dist * math.cos(e) * math.sin(a), dist * math.sin(e)))
+        aim(cam, focus)
+        cam.data.lens = 30 + 20 * t if PH else 50
+        cam.data.dof.focus_distance = (cam.location - focus).length
+        cam.data.dof.aperture_fstop = 4.0 - 2.0 * t if PH else 2.8
     scene.render.filepath = f"{outdir}/render_{i}.jpg"
     bpy.ops.render.render(write_still=True)

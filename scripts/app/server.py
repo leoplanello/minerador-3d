@@ -400,6 +400,18 @@ def set_voice(lid, name, data):
     (d / f"voz{ext}").write_bytes(data)
 
 
+def video_estimate(cfg, voice=None):
+    """Quadros e tempo do vídeo com câmera. Usa os segundos por quadro medidos neste computador na última vez; sem medição, o padrão do motor."""
+    spf = get_setting("spf:" + cfg["engine"])
+    secs = None
+    if voice:
+        try:
+            secs = min(max(videos.duration(voice), 4), 30)
+        except (ValueError, OSError):
+            pass
+    return videos.estimate(cfg, spf if isinstance(spf, (int, float)) else None, secs)
+
+
 def run_video(lid):
     def step(status, msg=""):
         with lock, db() as c:
@@ -413,8 +425,21 @@ def run_video(lid):
         kit = PRODUCTS / str(lid) / "kit"
         voice = next(iter(sorted(kit.glob("voz.*"))), None)
         music = next(iter(sorted(kit.glob("musica.*"))), None)
-        videos.make_video([PRODUCTS / str(lid) / "renders" / n for n in cand["images"]], (cand["kit"]["scripts"] or [cand["kit"]["title"]])[0],
-                          kit / "video.mp4", voice, cfg=video_cfg(), music=music)
+        cfg, script = video_cfg(), (cand["kit"]["scripts"] or [cand["kit"]["title"]])[0]
+        if cfg["motion"] == "camera":
+            est = video_estimate(cfg, voice)
+            step("running", f"Renderizando {est['frames']} quadros no Blender ({cfg['engine'].upper()}): cerca de {est['text']}")
+            with db() as c:
+                m = c.execute("SELECT m.file_path FROM models m WHERE m.listing_id=?", (lid,)).fetchone()
+            if not m or not m["file_path"]:
+                raise ValueError("envie o modelo 3D antes do vídeo com câmera")
+            W, H = videos.FORMATS[cfg["format"]]
+            with render_lock:
+                frames = renderizar.render_frames(ROOT / m["file_path"], PRODUCTS / str(lid) / "frames", est["frames"], engine=cfg["engine"].upper(), res=(W, H),
+                                                  title=cand["title"] or "", cfg=render_cfg(), on_time=lambda s: put_setting("spf:" + cfg["engine"], round(s, 2)))
+            videos.make_camera_video(frames, script, kit / "video.mp4", voice, cfg=cfg, music=music)
+        else:
+            videos.make_video([PRODUCTS / str(lid) / "renders" / n for n in cand["images"]], script, kit / "video.mp4", voice, cfg=cfg, music=music)
         step("ok", "com a sua voz" if voice else "sem voz: grave o roteiro, envie o áudio e gere de novo")
     except Exception as e:  # erro fica visível no card da GUI
         step("error", str(e)[:300])
@@ -1073,6 +1098,14 @@ class H(BaseHTTPRequestHandler):
             return self._json(get_onboarding())
         if path == "/api/media/config":
             return self._json(media_config())
+        if path == "/api/video/estimate":
+            q = parse_qs(url.query)
+            try:
+                cfg = videos.clean_video_cfg(video_cfg() | {k: q[k][0] for k in ("engine", "fps", "clip_seconds") if k in q})
+                lid = int(q.get("id", ["0"])[0])
+            except ValueError as e:
+                return self._json(dict(error=str(e)), 400)
+            return self._json(video_estimate(cfg, next(iter(sorted((PRODUCTS / str(lid) / "kit").glob("voz.*"))), None) if lid else None))
         if path == "/api/costs":
             return self._json(dict(values=get_costs(), labels=custos.LABELS))
         m = re.fullmatch(r"/api/kit/(\d+)\.zip", path)

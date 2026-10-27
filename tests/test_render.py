@@ -89,3 +89,11 @@ def test_render_real_em_uso_nao_vira_fundo_branco(tmp_path, cenario):
     studio, uso = (Image.open(f).convert("RGB") for f in files)
     assert min(studio.getpixel((5, 5))) > 235  # a foto principal continua com fundo branco
     assert min(uso.getpixel((5, 5))) < 245 or min(uso.getpixel((590, 590))) < 245  # o cenário tem cor e sombra, não é branco puro
+
+
+def test_trajetoria_da_camera_abre_e_fecha_suave():
+    p = render.camera_path(25)
+    assert len(p) == 25 and p[0][2] == 0 and p[-1][2] == 1 and p[0][0] > p[-1][0]
+    ts = [t for _, _, t in p]
+    assert ts == sorted(ts) and ts[1] - ts[0] < ts[12] - ts[11]  # começa devagar
+    assert render.camera_path(1)[0][2] == 0

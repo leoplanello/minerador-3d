@@ -4,6 +4,7 @@ import re
 import polyhaven
 import proc
 import tempfile
+import time
 import zipfile
 from pathlib import Path
 from xml.etree import ElementTree as ET
@@ -129,3 +130,47 @@ def render_images(model, outdir, cfg=None, title=""):
                 return files
             err = (r.stderr or r.stdout)[-300:]
     raise ValueError(f"o Blender não gerou as imagens: {err}")
+
+
+def camera_path(n):
+    """Trajetória do vídeo: n quadros (az, el, t) com a câmera abrindo na sala e fechando na peça, suavizada no começo e no fim (smoothstep)."""
+    out = []
+    for i in range(n):
+        x = i / max(n - 1, 1)
+        t = x * x * (3 - 2 * x)
+        out.append((28 + (-24 - 28) * t, 10 + (6 - 10) * t, t))
+    return out
+
+
+def render_frames(model, outdir, n, engine="EEVEE", res=(1080, 1920), title="", cfg=None, on_time=lambda spf: None, timeout=6 * 3600):
+    """Quadros do vídeo em outdir/render_1.jpg... (câmera em movimento no cenário 'em uso'). engine: 'EEVEE' (rápido) ou 'CYCLES' (demora horas).
+    on_time recebe os segundos por quadro medidos, para a estimativa da próxima vez. Devolve os caminhos em ordem."""
+    if not BLENDER.exists():
+        raise ValueError("Blender não encontrado em tools/blender")
+    cfg = clean_render_cfg(dict(cfg or {}, views=["uso"]))
+    outdir.mkdir(parents=True, exist_ok=True)
+    for old in outdir.glob("render_*.jpg"):
+        old.unlink()
+    with tempfile.TemporaryDirectory() as tmp:
+        scene_cfg = cfg | dict(polyhaven=str(polyhaven.ROOT) if polyhaven.available() else "", contexto=scene_for(cfg, title), still_cycles=False, res=list(res),
+                               views=[("uso", az, el, 1.0, t) for az, el, t in camera_path(n)], samples_eevee=QUALITY[cfg["quality"]][0],
+                               samples_cycles=QUALITY[cfg["quality"]][1], dist=FILL[cfg["fill"]])
+        cfgfile = Path(tmp) / "cfg.json"
+        cfgfile.write_text(json.dumps(scene_cfg), encoding="utf-8")
+        stl = Path(model)
+        if stl.suffix.lower() == ".3mf":
+            stl = Path(tmp) / "modelo.stl"
+            threemf_to_stl(model, stl)
+        err = ""
+        for eng in ((engine,) if engine == "CYCLES" else ("EEVEE", "CYCLES")):
+            t0 = time.time()
+            try:
+                r = proc.run([str(BLENDER), "-b", "-P", str(SCENE), "--", str(stl), str(outdir), str(cfgfile), eng], capture_output=True, text=True, timeout=timeout)
+            except proc.TimeoutExpired:
+                raise ValueError("a geração dos quadros do vídeo passou do tempo limite")
+            files = [outdir / f"render_{i}.jpg" for i in range(1, n + 1)]
+            if all(f.is_file() for f in files):
+                on_time((time.time() - t0) / n)
+                return files
+            err = (r.stderr or r.stdout)[-300:]
+    raise ValueError(f"o Blender não gerou os quadros do vídeo: {err}")

@@ -271,7 +271,8 @@ const VIEWS = {
           toast(r.error || 'Chrome aberto: clique em Baixar na página do modelo'); if (!r.error) pollModel(id()); } };
       $('vup').onclick = () => { const f = $('vfile').files[0]; if (!f) return toast('Escolha o arquivo de áudio');
         fetch(`/api/voice/upload?id=${id()}&name=${encodeURIComponent(f.name)}`, {method:'POST', body:f}).then(r => r.json()).then(r => { toast(r.error || 'Áudio enviado. Gere o vídeo de novo.'); load(); }); };
-      $('vgo').onclick = async () => { const sv = await post('/api/media/config', {video: cfgRead('v', VID_FIELDS)}); if (sv.error) return toast(sv.error);
+      $('vgo').onclick = async () => { const vc = cfgRead('v', VID_FIELDS);
+        if (vc.motion === 'camera' && vc.engine === 'cycles' && !confirm(($('vest').textContent.match(/Tempo estimado: [^(]*/) || ['Vai demorar horas'])[0] + '. Renderizar o vídeo em Cycles mesmo assim?')) return; const sv = await post('/api/media/config', {video: cfgRead('v', VID_FIELDS)}); if (sv.error) return toast(sv.error);
         const r = await post('/api/video', {id: id()}); toast(r.error || 'Gerando o vídeo…'); load(); };
       $('shdone').onclick = async () => { const r = await post('/api/shopee/done', {id: id(), url: $('shurl').value}); toast(r.error || 'Marcado como publicado'); load(); };
       $('mlsearch').onclick = async () => { const r = await (await fetch('/api/ml/categories?q=' + encodeURIComponent($('mlq').value))).json();
@@ -288,7 +289,12 @@ const VIEWS = {
       $('kok').onclick = async () => { const r = await post('/api/kit/confirm', {id: id()}); toast(r.error || 'Kit confirmado'); load(); };
       document.querySelectorAll('[data-pv]').forEach(b => b.onclick = () => { pv = b.dataset.pv; document.querySelectorAll('[data-pv]').forEach(x => x.setAttribute('aria-pressed', x === b)); update(); });
       $('icfg').innerHTML = presetBar('i', IMG_PRESETS) + cfgHtml('i', IMG_FIELDS) + '<fieldset class="views"><legend>Vistas (cada uma vira uma imagem)</legend><div id="iviews"></div></fieldset>';
-      $('vcfg').innerHTML = presetBar('v', VID_PRESETS) + cfgHtml('v', VID_FIELDS);
+      $('vcfg').innerHTML = presetBar('v', VID_PRESETS) + cfgHtml('v', VID_FIELDS) + '<p id="vest" class="small" style="margin:8px 0 0"></p>';
+      const vestimate = async () => { const c = cfgRead('v', VID_FIELDS); const el = $('vest'); if (!el) return;
+        if (c.motion !== 'camera') { el.textContent = ''; return; }
+        const r = await (await fetch(`/api/video/estimate?id=${id()}&engine=${c.engine}&fps=${c.fps}&clip_seconds=${c.clip_seconds}`)).json();
+        el.innerHTML = r.error ? esc(r.error) : `<b>Tempo estimado: ${esc(r.text)}</b> (${r.frames} quadros, cerca de ${r.spf} s cada${r.measured ? ', medido neste computador' : ', estimativa padrão'}).${c.engine === 'cycles' ? ' <span style="color:var(--red)">O Cycles deixa o computador pesado por esse tempo todo.</span>' : ''}`; };
+      $('vcfg').addEventListener('change', vestimate); vestimate();
       const applyPreset = (pre, fields, list, e) => { const b = e.target.closest(`[data-${pre}preset]`); if (!b) return; const p = list.find(x => x.k === b.dataset[pre + 'preset']);
         cfgFill(pre, fields, {...cfgRead(pre, fields), ...p.c}); if (p.c.views) document.querySelectorAll('[data-iview]').forEach(x => x.checked = p.c.views.includes(x.dataset.iview)); toast('Sugestão aplicada: ' + p.l + '. Clique em Gerar para usar.'); };
       $('icfg').onclick = e => applyPreset('i', IMG_FIELDS, IMG_PRESETS, e); $('vcfg').onclick = e => applyPreset('v', VID_FIELDS, VID_PRESETS, e);
@@ -541,6 +547,9 @@ const IMG_FIELDS = [
 const VID_FIELDS = [
   {k:'format', l:'Formato', t:'select', o:{'9:16':'Vertical 9:16 (Reels, TikTok, Shopee)', '1:1':'Quadrado 1:1', '16:9':'Horizontal 16:9'}},
   {k:'seconds', l:'Segundos por imagem (sem voz)', t:'number', min:1, max:10, step:0.5},
+  {k:'motion', l:'Movimento do vídeo', t:'select', o:{imagens:'Imagens em sequência', camera:'Câmera em movimento na sala (renderiza no Blender)'}},
+  {k:'engine', l:'Render do vídeo com câmera', t:'select', o:{eevee:'EEVEE (rápido, alguns minutos)', cycles:'Cycles (mais realista, leva horas)'}},
+  {k:'clip_seconds', l:'Duração do vídeo com câmera (s)', t:'number', min:4, max:30, step:1},
   {k:'transition', l:'Transição', t:'select', o:{none:'Corte seco', fade:'Esmaecer'}},
   {k:'zoom', l:'Zoom lento nas imagens', t:'check'},
   {k:'captions', l:'Mostrar legenda do roteiro', t:'check'},
