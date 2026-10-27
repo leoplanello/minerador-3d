@@ -102,3 +102,30 @@ def score_candidates(title, ad_images, results, ask=ask_claude):
             if i in scores:
                 r["identity"] = scores[i]
     return verdict(results)
+
+
+def visual_prompt(title, photo):
+    return f"""Use a ferramenta Read para ver a imagem {photo}. É a foto de um anúncio de venda: «{title[:120]}».
+Descreva o objeto vendido pelo que se VÊ (forma, partes, como se prende, o que segura), e dê termos de busca em inglês para achar o modelo 3D imprimível
+dele no Printables, MakerWorld e Thingiverse. Os termos devem variar: um bem específico pela forma, outros pela função e outros por sinônimos usados por quem modela
+(ex.: holder, mount, bracket, stand, rack, hanger, organizer), de 2 a 5 palavras cada, do mais provável ao mais amplo.
+Responda SOMENTE com JSON: {{"descricao": "uma ou duas frases em português", "termos": ["6 a 8 termos em inglês"]}}"""
+
+
+def parse_visual(text):
+    m = re.search(r"\{.*\}", text, re.S)
+    if not m:
+        raise ValueError("a resposta do Claude não trouxe JSON")
+    try:
+        d = json.loads(m.group(0))
+        terms = [re.sub(r"\s+", " ", str(t)).strip()[:60] for t in d["termos"] if str(t).strip()]
+    except (json.JSONDecodeError, KeyError, TypeError):
+        raise ValueError("o JSON dos termos veio quebrado")
+    return dict(descricao=str(d.get("descricao", "")).strip()[:300], termos=list(dict.fromkeys(terms))[:8])
+
+
+def visual_terms(title, photo, ask=ask_claude):
+    """Descrição e termos de busca tirados da FOTO do anúncio (o título em português nem sempre bate com o nome do modelo nos sites em inglês)."""
+    with tempfile.TemporaryDirectory() as tmp:
+        jpg = save_jpg(Path(photo).read_bytes(), Path(tmp) / "anuncio.jpg")
+        return parse_visual(ask(visual_prompt(title, jpg), tmp))
