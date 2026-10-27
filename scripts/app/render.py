@@ -89,7 +89,7 @@ def clean_render_cfg(d):
     return cfg | dict(views=views, size=size, shadow=bool(cfg["shadow"]), turn=turn)
 
 
-PROPS = {"chaves": ("chave", "chaveiro", "key"), "roteador": ("roteador", "modem", "router")}  # objeto que a peça segura, pelo título
+PROPS = {"chaves": ("chave", "chaveiro", "key")}  # objeto que a peça segura, pelo título. Roteador ficou de fora: sem a geometria do suporte o aparelho esconde a peça
 
 
 def prop_for(title):

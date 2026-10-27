@@ -199,6 +199,7 @@ def prim(kind, loc, scale, mat, rot=(0, 0, 0), name="prop", **kw):
     getattr(bpy.ops.mesh, f"primitive_{kind}_add")(location=loc, rotation=rot, **kw)
     o = bpy.context.object
     o.name, o.scale = name, scale
+    bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)  # o chanfro (modifier) trabalha em medidas reais, não na caixa unitária
     o.data.materials.append(mat)
     return o
 
@@ -231,7 +232,7 @@ def make_prop(kind, lo_, hi_):
         out.append(prim("cube", (cx, front - d / 2 - 2, bottom + h / 2 + 10), (w / 2, d / 2, h / 2), body, name="roteador", size=2))
         out[-1].modifiers.new("chanfro", "BEVEL").width = 3
         led = solid("led", (0.05, 0.9, 0.2), 0.3)
-        out.append(prim("cube", (cx - w / 2 + 14, front - d - 2.4, bottom + h - 22), (1, 1, 1), led, name="led", size=1, scale=(5, 1, 5)))
+        out.append(prim("cube", (cx - w / 2 + 14, front - d - 2.4, bottom + h - 22), (5, 1, 5), led, name="led", size=1))
     return out
 
 
@@ -242,7 +243,7 @@ def room_scene():
     ctx.append(plane((0, 0.5, 2500), (math.radians(90), 0, 0), (24000, 5000), wall, "parede-sala"))  # a câmera nunca vê a borda: parede, piso e teto passam do quadro
     ctx.append(plane((0, -9000, 0), (0, 0, 0), (24000, 18000), floor, "piso-sala"))
     sofa, sofa_top = furniture("Sofa_01", 300, -520, 0)
-    plant, _ = furniture("potted_plant_01", 2000, -400, 0)
+    plant, _ = furniture("potted_plant_01", 2150, -400, 0)
     ctx.extend(sofa + plant)
     if ctx_kind == "mesa":  # a peça sobre a mesa lateral, à frente do sofá
         tbl, top = furniture("side_table_01", -150, -900, 0)
@@ -252,7 +253,7 @@ def room_scene():
         lo2, hi2 = bounds(obj_ctx)
         obj_ctx.location += Vector((-150 - (lo2.x + hi2.x) / 2, -900 - (lo2.y + hi2.y) / 2, top - lo2.z))
     else:
-        tbl, _ = furniture("side_table_01", -1750, -300, 0)
+        tbl, _ = furniture("side_table_01", -1550, -300, 0)
         ctx.extend(tbl)
         up_ax = max((i for i in range(3) if i != back_ax), key=lambda i: dims0[i])
         up = Vector((1 if i == up_ax else 0) for i in range(3))
@@ -271,7 +272,7 @@ def room_scene():
     env, bg, out, tc, mp = (nt.nodes.new(t) for t in ("ShaderNodeTexEnvironment", "ShaderNodeBackground", "ShaderNodeOutputWorld", "ShaderNodeTexCoord", "ShaderNodeMapping"))
     env.image = bpy.data.images.load(str(next((PH / "brown_photostudio_05").glob("*.hdr"))))
     mp.inputs["Rotation"].default_value[2] = math.radians(cfg.get("hdri_rot", 200))
-    bg.inputs["Strength"].default_value = 2.5
+    bg.inputs["Strength"].default_value = 1.6
     nt.links.new(tc.outputs["Generated"], mp.inputs["Vector"])
     nt.links.new(mp.outputs[0], env.inputs["Vector"])
     nt.links.new(env.outputs["Color"], bg.inputs["Color"])
@@ -310,9 +311,9 @@ sun_dir = Vector((-0.55, 0.65, -0.55)) if ctx_kind == "parede" else Vector((-0.5
 sun_dir.normalize()
 bpy.ops.object.light_add(type="SUN", location=target - sun_dir * size * 8)
 sun = bpy.context.object
-sun.data.energy = {"soft": 1.0, "normal": 1.5, "strong": 2.2}[cfg["light"]]
+sun.data.energy = ({"soft": 3.0, "normal": 4.5, "strong": 6.5} if PH else {"soft": 1.0, "normal": 1.5, "strong": 2.2})[cfg["light"]]  # na sala o sol da janela faz a sombra de contato
 sun.data.angle = math.radians(6 if PH else 2.5)
-sun.data.color = (1.0, 0.94, 0.84)
+sun.data.color = (1.0, 0.88, 0.72) if PH else (1.0, 0.94, 0.84)
 sun.rotation_euler = sun_dir.to_track_quat("-Z", "Y").to_euler()
 ctx.append(sun)
 q = sun_dir.to_track_quat("-Z", "Y")
@@ -361,6 +362,7 @@ for i, (name, az, el, zoom, *rest) in enumerate(cfg["views"], 1):
     for o in ctx:
         o.hide_render = not in_use
     scene.world = world_ctx if in_use else world_studio
+    scene.view_settings.view_transform = "AgX" if in_use and PH else "Standard"  # o estúdio fica em Standard (fundo branco puro); a sala em AgX, com mais gama nas luzes
     if in_use and cfg.get("still_cycles", True) and engine != "CYCLES":  # as fotos "em uso" saem em Cycles com denoiser; o estúdio é rápido no EEVEE
         scene.render.engine = "CYCLES"
         scene.cycles.samples = cfg["samples_cycles"]
@@ -378,6 +380,8 @@ for i, (name, az, el, zoom, *rest) in enumerate(cfg["views"], 1):
             frac, fst, lens = 0.14 + 0.24 * t, 4.0 - 2.2 * t, 35 + 15 * t
         span = framed_span if name == "uso" or t is not None else part_span  # com o objeto na cena, o enquadramento inclui o objeto
         dist = span * lens / (36 * frac)
+        if t is None:  # peça pequena: o médio e o aberto ainda mostram o ambiente (a peça fica menor que a fração pedida)
+            dist = max(dist, {"uso_medio": 900, "uso_aberto": 2700}.get(name, 0))
         cam.data.lens, cam.data.dof.aperture_fstop = lens, fst
     else:
         dist = size * cfg["dist"] * zoom
