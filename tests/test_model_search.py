@@ -76,3 +76,19 @@ def test_servidor_guarda_modelo_e_licenca_do_printables(tmp_path, monkeypatch):
     (cand,) = server.candidates()
     assert cand["steps"]["model"] == "ok" and cand["model"]["source_url"].endswith("7-x")
     assert "NÃO permite uso comercial" in cand["model"]["license_note"]
+
+
+def test_licenca_lida_da_pagina_do_makerworld_e_do_thingiverse():
+    mw = '{"id":1,"license":"Standard Digital File License","allowReCreation":false}...{"license":"BY-NC"}'
+    assert ms.parse_license("makerworld", mw) == "Standard Digital File License"
+    assert ms.commercial_ok("Standard Digital File License") is False and ms.commercial_ok("BY-NC") is False
+    assert ms.commercial_ok("BY") is True and ms.commercial_ok("BY-SA") is True and ms.commercial_ok("CC0") is True
+    tv = '"license":"http://creativecommons.org/licenses/by/4.0/","interactionStatistic":[]'
+    assert ms.parse_license("thingiverse", tv) == "Creative Commons — BY" and ms.commercial_ok(ms.parse_license("thingiverse", tv)) is True
+    assert ms.commercial_ok(ms.parse_license("thingiverse", "creativecommons.org/licenses/by-nc-sa/3.0/")) is False
+    assert ms.parse_license("thingiverse", "<html>sem licença</html>") == ""
+
+
+def test_titulo_do_thingiverse_sem_o_texto_da_miniatura():
+    out = ms.extract_model_links("thingiverse", [dict(href="https://www.thingiverse.com/thing:1?x=1", alt="Thumbnail representing Spray-can holder", text="")])
+    assert out[0]["title"] == "Spray-can holder"
