@@ -12,7 +12,7 @@ import webview
 
 import paths
 
-URL = "http://localhost:8765"
+URL = f"http://localhost:{paths.PORT}"
 SERVER = Path(__file__).parent / "server.py"
 
 

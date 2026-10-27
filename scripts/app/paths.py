@@ -14,6 +14,7 @@ HOME = Path(os.environ.get("MINERADOR_HOME") or (Path(os.environ.get("LOCALAPPDA
 DATA = Path(os.environ.get("MINERADOR_DATA") or (HOME / "data" if FROZEN else SOURCE_ROOT))
 TOOLS = Path(os.environ.get("MINERADOR_TOOLS") or (HOME / "tools" if FROZEN else SOURCE_ROOT / "tools"))
 UPDATES = HOME / "updates"
+PORT = int(os.environ.get("MINERADOR_PORT") or 8765)  # outra porta só para testar sem derrubar o app que já está aberto
 
 
 def version():

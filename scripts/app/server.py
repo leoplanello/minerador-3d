@@ -1391,7 +1391,7 @@ class H(BaseHTTPRequestHandler):
         pass
 
 
-def make_server(port=8765):
+def make_server(port=paths.PORT):
     """Prepara o banco e devolve o servidor HTTP (sem iniciar). O desktop.py instalado roda isto numa thread."""
     init()
     resume()
@@ -1399,5 +1399,5 @@ def make_server(port=8765):
 
 
 if __name__ == "__main__":
-    print("http://localhost:8765")
+    print(f"http://localhost:{paths.PORT}")
     make_server().serve_forever()
