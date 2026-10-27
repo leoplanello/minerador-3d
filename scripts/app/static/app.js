@@ -90,9 +90,11 @@ const VIEWS = {
       <div class="card"><h2>Custos e taxas</h2>
         <p class="small mut" style="margin-top:0">Valores provisórios (estimativas). A margem de cada produto usa estes números; marque “confirmado” quando forem os reais.</p>
         <div class="form" id="cform"></div></div>
+      <div class="card" id="selconf"></div>
       <div class="card"><h2>Dados da loja (usados no texto dos anúncios)</h2><div class="form" id="bform"></div></div>
       <div class="card"><h2>Conta do Mercado Livre</h2><p id="mlst" class="small mut" style="margin-top:0"></p><div class="form" id="mlcfg"></div></div>`,
     bind: async () => {
+      SEL.bindConfig();
       const {values, labels} = await (await fetch('/api/costs')).json();
       $('cform').innerHTML = Object.keys(labels).map(k => `<label>${esc(labels[k])}<input type="number" step="0.01" min="0" data-k="${k}" value="${values[k]}"></label>`).join('') +
         `<label class="row" style="flex-direction:row;gap:8px;color:var(--fg);font-size:14px"><input type="checkbox" id="cconf" ${values.confirmado ? 'checked' : ''}> Estes são os custos reais (confirmado)</label>
@@ -123,10 +125,12 @@ const VIEWS = {
       <div class="toolbar"><select id="pstore" aria-label="Loja"><option value="">Todas as lojas</option></select>
         <select id="sort" aria-label="Ordenar"><option value="score">Melhor ranking</option><option value="growth">Mais crescimento</option><option value="sold">Mais vendidos</option>
           <option value="pa">Menor preço</option><option value="pd">Maior preço</option><option value="recent">Lidos recentemente</option><option value="manual">Minha ordem (arraste)</option></select>
+        <label class="chk small"><input type="checkbox" id="pfail"> Mostrar reprovados nos filtros <span id="nfail" class="mut"></span></label>
+        <label class="chk small" title="Mais de uma unidade por dia, pela data de publicação informada"><input type="checkbox" id="pchamp"> Só campeões</label>
         <span id="pcount" class="small mut grow"></span><button id="csv" class="sm ghost">Exportar CSV</button></div>
       <div id="plist"></div></div>`,
     bind: () => {
-      $('pstore').onchange = $('sort').onchange = update;
+      $('pstore').onchange = $('sort').onchange = $('pfail').onchange = $('pchamp').onchange = update;
       document.querySelectorAll('[data-view]').forEach(b => b.onclick = () => { filter = b.dataset.view; store('pfilter', filter);
         document.querySelectorAll('[data-view]').forEach(x => x.setAttribute('aria-pressed', x === b)); update(); });
       document.querySelectorAll('[data-layout]').forEach(b => b.onclick = () => { layout = b.dataset.layout; store('playout', layout);
@@ -144,13 +148,14 @@ const VIEWS = {
       ['new','approved','discarded','all'].forEach(k => { $('n-' + k).textContent = num(S.candidates.filter(c => k === 'all' || c.status === k).length); });
       const rows = catalog(), max = Math.max(1, ...S.candidates.map(c => c.score));
       $('pcount').textContent = `${num(rows.length)} de ${num(S.candidates.length)} produtos`;
+      const nf = S.candidates.filter(c => c.filtros && c.filtros.status === 'reprovado' && c.status !== 'approved').length; $('nfail').textContent = nf ? `(${nf} escondidos)` : '';
       const acts = c => c.status === 'new' ? `<button class="ghost sm" data-decide="${c.id}" data-st="discarded">${ic('x')}Descartar</button><button class="pri sm" data-decide="${c.id}" data-st="approved">${ic('check')}Aprovar</button>`
         : c.status === 'approved' ? `<a class="btn sm" href="#/producao/${c.id}">Produzir</a>` : `<button class="sm" data-decide="${c.id}" data-st="new">${ic('undo')}Restaurar</button>`;
       const stat = {new:'A revisar', approved:'Aprovado', discarded:'Descartado'};
       $('plist').innerHTML = !rows.length ? `<div class="empty"><b>${S.candidates.length ? 'Nenhum produto neste filtro' : 'Nenhum produto ainda'}</b>${S.candidates.length ? 'Troque a aba ou a loja.' : 'Leia uma loja e os produtos aparecem aqui.'}</div>`
         : layout === 'grid' ? `<div class="grid">${rows.map(c => `<div class="pcard" data-key="${c.id}"><a class="pic" href="${esc(c.url)}" target="_blank" rel="noopener">${img(c)}<span class="chip ${esc(c.status)}">${stat[c.status]}</span></a>
             <div class="body"><a class="title wrap" href="${esc(c.url)}" target="_blank" rel="noopener" title="${esc(c.title)}">${esc(c.title || c.url)}</a>
-              <div class="price">${price(c.price)}</div><div class="small mut">+${num(c.sold)} vendidos · ${num(c.reviews)} avaliações</div>
+              <div class="price">${price(c.price)}</div><div class="small mut">+${num(c.sold)} vendidos · ${num(c.reviews)} avaliações</div><div class="small">${SEL.chip(c)}</div>
               <div class="small mut" title="${esc(c.store_name || '')}">${esc(c.store_name || '')}</div>
               <div class="bar" title="Ranking ${c.score}"><i style="width:${Math.round(c.score / max * 100)}%"></i></div></div>
             <div class="foot">${acts(c)}</div></div>`).join('')}</div>`
@@ -158,7 +163,7 @@ const VIEWS = {
             ${img(c)}<div class="main"><a class="title wrap" href="${esc(c.url)}" target="_blank" rel="noopener" title="Abrir anúncio">${esc(c.title || c.url)}</a>
               <div class="price">${price(c.price)}<span class="sold">+${num(c.sold)} vendidos</span></div>
               <div class="meta"><span>${esc(c.store_name || '—')}</span><span><b>${num(c.reviews)}</b> avaliações</span>${growthInfo(c)}
-                ${c.material ? `<span>material ${esc(c.material.replace(/^[:\s]+/, ''))}</span>` : ''}<span class="chip ${esc(c.status)}">${stat[c.status]}</span></div></div>
+                ${c.material ? `<span>material ${esc(c.material.replace(/^[:\s]+/, ''))}</span>` : ''}<span class="chip ${esc(c.status)}">${stat[c.status]}</span> ${SEL.chip(c)}</div></div>
             <div class="actions">${acts(c)}</div></div>`).join('')}</div>`;
     },
   },
@@ -180,6 +185,7 @@ const VIEWS = {
     // o cabeçalho é refeito a cada atualização; o card do modelo é montado uma vez para não apagar o que você digita
     mount: () => `<div id="prod"></div>
       <div class="card" id="ovcard" hidden></div>
+      <div class="card" id="selcard" hidden></div>
       <div class="card" id="tlcard" hidden><div class="card-h"><h2>Linha do tempo</h2><span class="small mut">cada etapa, quando rodou e quanto levou</span></div><div id="tline"></div></div>
       <div class="card" id="mcard" hidden><div class="card-h"><h2>Modelo 3D</h2><span id="mchip" class="chip"></span></div>
         <p id="mstate" class="small mut" style="margin:0 0 12px"></p>
@@ -335,6 +341,7 @@ const VIEWS = {
            ${(() => { const [t, d, a, k] = nextAction(c); return `<div class="next ${k || ''}"><div class="grow"><b>${esc(t)}</b><div class="small">${esc(d)}</div></div>${a === 'auto' ? `<button class="pri" data-auto="${c.id}">${ic('refresh')}Rodar etapas automáticas</button>` : ''}</div>`; })()}</div>`;
       if (!c) return;
       $('ovcard').hidden = false; $('ovcard').innerHTML = overview(c);
+      SEL.render(c);
       $('tlcard').hidden = false;
       const msgs = {slice: c.slice_msg, copy: c.copy_msg, images: c.images_msg, video: c.video_msg, shopee: ''};
       $('tline').innerHTML = `<ol class="tl">${S.steps.map(n => { const st = c.steps[n] || 'pending', t = (c.step_times || {})[n] || {}, own = c.publications[n];
@@ -435,7 +442,8 @@ function catalog() {
   const q = $('q').value.toLowerCase(), st = $('pstore').value;
   const key = {score:c => -c.score, growth:c => -(c.growth * 1000 + c.sold_growth), sold:c => -c.sold, pa:c => c.price ?? 1e9, pd:c => -(c.price ?? 0),
     recent:c => -Date.parse(String(c.last_seen).replace(' ', 'T') + 'Z'), manual:c => { const i = DND.load('products').indexOf(String(c.id)); return i < 0 ? 1e9 : i; }}[$('sort').value];
-  return S.candidates.filter(c => (!st || String(c.store_id) === st) && (filter === 'all' || c.status === filter)
+  const failed = c => c.filtros && c.filtros.status === 'reprovado', showFailed = $('pfail') && $('pfail').checked;
+  return S.candidates.filter(c => (!st || String(c.store_id) === st) && (filter === 'all' || c.status === filter) && (showFailed || !failed(c) || c.status === 'approved') && (!$('pchamp').checked || c.champion)
       && (!q || (c.title || '').toLowerCase().includes(q) || (c.store_name || '').toLowerCase().includes(q))).sort((a, b) => key(a) - key(b));
 }
 // crescimento entre a 1ª e a última leitura, com a data da 1ª e uma minilinha das avaliações

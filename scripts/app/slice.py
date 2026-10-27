@@ -1,6 +1,7 @@
 """Fatia um 3MF/STL com o Bambu Studio portátil (tools/bambustudio) e lê tempo e gramas do G-code."""
 import json
 import re
+import tempfile
 import proc
 from pathlib import Path
 
@@ -26,8 +27,8 @@ def parse_gcode(text):
     return minutes, round((float(cm3.group(1)) if cm3 else float(mm3.group(1)) / 1000) * PLA_DENSITY, 1)
 
 
-def slice_model(model, outdir):
-    """Devolve (minutos, gramas, caminho do .gcode). Erros viram ValueError com texto para a GUI."""
+def slice_model(model, outdir, support=False):
+    """Devolve (minutos, gramas, caminho do .gcode). Erros viram ValueError com texto para a GUI. support=True liga o suporte automático (teste de suporte)."""
     slicer = SLICER if SLICER.exists() else ORCA  # shortcut: o OrcaSlicer só entra se já estiver em tools/, o app não o baixa mais
     if not slicer.exists():
         raise ValueError("Bambu Studio não encontrado em tools/bambustudio")
@@ -35,12 +36,18 @@ def slice_model(model, outdir):
     for old in outdir.glob("*.gcode"):  # evita ler o resultado de um fatiamento anterior
         old.unlink()
     bbl = slicer.parent / "resources" / "profiles" / "BBL"
-    cmd = [str(slicer), "--slice", "0", "--outputdir", str(outdir), "--load-settings", ";".join(str(bbl / x) for x in PROFILES),
-           "--load-filaments", str(bbl / FILAMENT), str(model)]
-    try:
-        r = proc.run(cmd, capture_output=True, text=True, timeout=600)
-    except proc.TimeoutExpired:
-        raise ValueError("o fatiamento passou de 10 minutos; o modelo pode ser grande demais")
+    with tempfile.TemporaryDirectory() as tmp:
+        settings = [bbl / x for x in PROFILES]
+        if support:  # o fatiador só aceita UM arquivo de processo: uma cópia do padrão com o suporte automático ligado
+            base = json.loads(settings[1].read_text(encoding="utf-8"))
+            base.update(name=base["name"] + " teste de suporte", enable_support="1", support_type="normal(auto)", support_threshold_angle="30")
+            settings[1] = Path(tmp) / "processo-suporte.json"
+            settings[1].write_text(json.dumps(base), encoding="utf-8")
+        cmd = [str(slicer), "--slice", "0", "--outputdir", str(outdir), "--load-settings", ";".join(map(str, settings)), "--load-filaments", str(bbl / FILAMENT), str(model)]
+        try:
+            r = proc.run(cmd, capture_output=True, text=True, timeout=600)
+        except proc.TimeoutExpired:
+            raise ValueError("o fatiamento passou de 10 minutos; o modelo pode ser grande demais")
     out = next(outdir.glob("*.gcode"), None)
     if not out:
         try:  # o Bambu Studio explica a falha no result.json
@@ -51,3 +58,11 @@ def slice_model(model, outdir):
             why = "o modelo não cabe na mesa da A1 (256 × 256 × 256 mm) ou está inválido; escolha um arquivo menor ou outro modelo"
         raise ValueError(f"o Bambu Studio não gerou G-code (código {r.returncode}): {why}")
     return *parse_gcode(out.read_text(encoding="utf-8", errors="replace")), out
+
+
+def check_support(model, outdir):
+    """Fatiamento de teste com suporte automático ligado: o modelo precisa de suporte se o G-code traz material de suporte.
+    Devolve dict(support, lines, minutes, grams); o tempo e o peso são os COM suporte."""
+    minutes, grams, out = slice_model(model, outdir, support=True)
+    n = len(re.findall(r"^; FEATURE: Support|^;TYPE:Support", out.read_text(encoding="utf-8", errors="replace"), re.M))
+    return dict(support=n > 0, lines=n, minutes=minutes, grams=grams)

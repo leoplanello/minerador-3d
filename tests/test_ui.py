@@ -245,3 +245,34 @@ def test_linha_do_tempo_e_atividade_do_produto(gui):
         assert "em andamento" in page.inner_text("#tline li.running")
         assert "Trabalhando" in page.inner_text("#status")  # a barra do topo mostra o que o app está fazendo
         b.close()
+
+
+def test_filtros_na_lista_na_configuracao_e_no_produto(gui):
+    with server.db() as c:  # o produto 1 vira "colorido, para montar": reprovado nos filtros
+        c.execute("UPDATE listings SET title='Organizador Colorido Para Montar Com Parafusos' WHERE id=1")
+    with playwright.sync_playwright() as p:
+        b = p.chromium.launch(channel="chrome")
+        page = b.new_page(viewport={"width": 1280, "height": 800})
+        page.goto(f"{gui}/#/produtos")
+        page.click("[data-view=all]")
+        page.wait_for_selector(".item")
+        assert "Organizador Colorido" not in page.inner_text("#plist")  # reprovado fica escondido
+        assert "1 escondidos" in page.inner_text("#nfail")
+        page.check("#pfail")
+        page.wait_for_selector("text=Organizador Colorido")
+        assert "Reprovado: mais de 1 cor" in page.inner_text("#plist") and "/dia" not in page.inner_text("#plist")  # sem data de publicação, sem vendas por dia
+        page.goto(f"{gui}/#/config")
+        page.wait_for_selector("#fprinter")
+        assert page.input_value("#fprinter") == "Bambu Lab A1 Mini" and page.input_value("[data-k=max_hours]") == "4"
+        page.fill("[data-k=max_hours]", "3")
+        page.click("#fsave")
+        page.wait_for_timeout(500)
+        assert server.get_filters()["max_hours"] == 3
+        page.goto(f"{gui}/#/producao/2")
+        page.wait_for_selector("#selcard:not([hidden])")
+        assert "Filtros e vendas por dia" in page.inner_text("#selcard") and "Falta testar" in page.inner_text("#selcard")
+        page.fill("#selcreated", "2025-01-01")
+        page.click("#selsave")
+        page.wait_for_timeout(800)
+        assert server.candidates()[0]["created"] in ("2025-01-01", "") or any(r["created"] == "2025-01-01" for r in server.candidates())
+        b.close()

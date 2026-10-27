@@ -11,6 +11,7 @@ import sys
 import threading
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import tempfile
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
@@ -25,6 +26,7 @@ import ml  # noqa: E402
 import render as renderizar  # noqa: E402
 import slice as fatiar  # noqa: E402
 import video as videos  # noqa: E402
+import selecao  # noqa: E402
 import texto  # noqa: E402  (scripts/app/slice.py; mesmo diretório do server.py)
 from classify import score  # noqa: E402
 import model_search  # noqa: E402
@@ -55,7 +57,7 @@ def init():
         c.executescript((paths.RESOURCES / "db" / "schema.sql").read_text(encoding="utf-8"))
         if "profile" not in [r[1] for r in c.execute("PRAGMA table_info(stores)")]:  # banco criado antes dos perfis
             c.execute("ALTER TABLE stores ADD COLUMN profile TEXT DEFAULT ''")
-        for table, col, ddl in [("listings", "thumb", "TEXT DEFAULT ''"), ("listings", "image", "INTEGER DEFAULT 0"),
+        for table, col, ddl in [("listings", "thumb", "TEXT DEFAULT ''"), ("listings", "image", "INTEGER DEFAULT 0"), ("listings", "created", "TEXT DEFAULT ''"),
                                 ("stores", "name", "TEXT DEFAULT ''")]:  # bancos criados antes dessas colunas
             if col not in [r[1] for r in c.execute(f"PRAGMA table_info({table})")]:
                 c.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}")
@@ -492,6 +494,10 @@ def run_slice(lid):
             step("ok")
             with lock, db() as c:
                 c.execute("UPDATE steps SET status='ok' WHERE listing_id=? AND name='cost'", (lid,))
+        try:
+            eval_filters(lid)  # filtros do produto: medidas e teste de suporte (fora do lock do fatiamento)
+        except Exception:
+            pass  # o card mostra "não testado" e o botão Avaliar tenta de novo
     except Exception as e:  # erro fica visível no card da GUI
         step("error", str(e)[:300])
 
@@ -768,8 +774,54 @@ def run_store(store_id, url, profile):
         setstatus("error", str(e)[:300])
 
 
+def get_filters():
+    try:
+        return selecao.clean_filters(get_setting("filters", {}))
+    except ValueError:
+        return selecao.clean_filters({})
+
+
+def eval_filters(lid, support=True):
+    """Mede o modelo (dimensões, espessura média, área em balanço) e, com support, faz o fatiamento de teste com suporte ligado. Guarda em mesh:<id>."""
+    with db() as c:
+        m = c.execute("SELECT file_path FROM models WHERE listing_id=?", (lid,)).fetchone()
+    if not m or not m["file_path"]:
+        raise ValueError("envie o modelo 3D antes de avaliar os filtros")
+    path = ROOT / m["file_path"]
+    prev = get_setting(f"mesh:{lid}", {})
+    put_setting(f"mesh:{lid}", dict(prev, status="running", msg=""))
+    data = dict(prev, status="ok", msg="")
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            stl = path
+            if path.suffix.lower() == ".3mf":
+                stl = Path(tmp) / "modelo.stl"
+                renderizar.threemf_to_stl(path, stl)
+            data["stats"] = selecao.mesh_stats(stl)
+        if support:
+            try:
+                with slice_lock:
+                    r = fatiar.check_support(path, PRODUCTS / str(lid) / "slice_suporte")
+                data.update(support=r["support"], support_minutes=r["minutes"])
+            except ValueError as e:
+                data.update(support=None, msg="teste de suporte indisponível: " + str(e)[:160])
+    except Exception as e:
+        data.update(status="error", msg=str(e)[:200])
+    put_setting(f"mesh:{lid}", data)
+    return data
+
+
+def set_created(lid, created):
+    created = str(created or "").strip()
+    if created and selecao.age_days(created) is None:
+        raise ValueError("data de publicação inválida (use AAAA-MM-DD, no passado)")
+    with lock, db() as c:
+        c.execute("UPDATE listings SET created=? WHERE id=?", (created[:10], lid))
+
+
 def candidates():
     cc = get_costs()
+    F = get_filters()
     with db() as c:
         rows = []
         for l in c.execute("SELECT l.*, s.name AS store_name, s.url AS store_url FROM listings l JOIN stores s ON s.id=l.store_id"):
@@ -803,7 +855,11 @@ def candidates():
                                       slice_msg=json.loads(slmsg["data"]).get("msg", "") if slmsg else "", history=[s["reviews"] for s in snaps],
                                       score=score(last["sold"], last["reviews"], l["price"], l["is_3d"], last["rank"], growth),
                                       steps=steps))
-        return sorted(rows, key=lambda r: -r["score"])
+            mesh = get_setting(f"mesh:{l['id']}", {}) or {}
+            spd = selecao.sales_per_day(last["sold"], l["created"])
+            rows[-1].update(filtros=selecao.evaluate(l["title"], F, mesh.get("stats"), sl["minutes"] if sl else None, mesh.get("support")) | dict(mesh_msg=mesh.get("msg", ""), mesh_status=mesh.get("status", ""),
+                            stats=mesh.get("stats")), per_day=spd, age_days=selecao.age_days(l["created"]), champion=selecao.is_champion(spd, F))
+        return sorted(rows, key=lambda r: (r["filtros"]["status"] == "reprovado", -r["score"]))  # reprovados nos filtros vão para o fim
 
 
 _ML_CACHE = {"at": 0, "data": None}
@@ -1024,6 +1080,16 @@ class H(BaseHTTPRequestHandler):
             return self._json(media_config())
         if path == "/api/costs":
             return self._json(dict(values=get_costs(), labels=custos.LABELS))
+        if path == "/api/filtros":
+            return self._json(dict(values=get_filters(), labels=selecao.LABELS))
+        if path == "/api/similares":
+            lid = int(parse_qs(url.query).get("id", ["0"])[0])
+            cands = candidates()
+            me = next((c for c in cands if c["id"] == lid), None)
+            if not me:
+                return self._json(dict(error="produto não encontrado"), 404)
+            sim = selecao.similar_rows(me, cands)
+            return self._json(dict(rows=selecao.compare_similar(sim), price=selecao.price_band(sim, me["id"])))
         m = re.fullmatch(r"/api/kit/(\d+)\.zip", path)
         if m:
             try:
@@ -1190,6 +1256,27 @@ class H(BaseHTTPRequestHandler):
                     return self._json(dict(error="aprove o produto antes" if not st else "já está gerando"), 400)
                 c.execute("UPDATE steps SET status='running' WHERE listing_id=? AND name='copy'", (data["id"],))
             threading.Thread(target=run_copy, args=(data["id"],), daemon=True).start()
+            return self._json(dict(ok=True))
+        if path == "/api/filtros":
+            try:
+                put_setting("filters", selecao.clean_filters(data))
+            except (ValueError, TypeError) as e:
+                return self._json(dict(error=str(e)), 400)
+            return self._json(dict(ok=True))
+        if path == "/api/filtros/avaliar":
+            try:
+                lid = int(data["id"])
+                if lid not in {c["id"] for c in candidates()}:
+                    raise ValueError("produto não encontrado")
+            except (ValueError, TypeError, KeyError) as e:
+                return self._json(dict(error=str(e)), 400)
+            threading.Thread(target=lambda: eval_filters(lid), daemon=True).start()
+            return self._json(dict(ok=True))
+        if path == "/api/listing/created":
+            try:
+                set_created(int(data["id"]), data.get("created", ""))
+            except (ValueError, TypeError, KeyError) as e:
+                return self._json(dict(error=str(e)), 400)
             return self._json(dict(ok=True))
         if path in ("/api/costs", "/api/price"):
             try:
