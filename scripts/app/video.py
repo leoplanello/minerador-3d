@@ -3,7 +3,7 @@ Tudo é configurável (formato, tempo por imagem, transição, zoom, legenda, fu
 import os
 import re
 import shutil
-import subprocess
+import proc
 import tempfile
 import textwrap
 from pathlib import Path
@@ -79,7 +79,7 @@ def fit_caption(text, W, max_h, fs):
 
 
 def duration(audio):
-    r = subprocess.run([str(FFPROBE), "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(audio)], capture_output=True, text=True)
+    r = proc.run([str(FFPROBE), "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(audio)], capture_output=True, text=True)
     return float(r.stdout.strip())
 
 
@@ -143,7 +143,7 @@ def make_video(images, script, out, voice=None, cfg=None, music=None):
             maps += ["-map", "[aout]"]
         cmd += ["-filter_complex", graph] + maps + (["-c:a", "aac"] if audio else [])
         cmd += ["-r", str(cfg["fps"]), "-pix_fmt", "yuv420p", "-c:v", "libx264", "-crf", str(CRF[cfg["quality"]]), "-t", f"{total:.2f}", str(out)]
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=900)
+        r = proc.run(cmd, capture_output=True, text=True, timeout=900)
     if r.returncode or not out.exists():
         raise ValueError("o ffmpeg falhou: " + r.stderr[-300:])
     return out

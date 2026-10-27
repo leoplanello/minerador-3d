@@ -3,7 +3,6 @@ import os
 import random
 import sys
 import re
-import subprocess
 import time
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
@@ -13,6 +12,7 @@ from playwright.sync_api import sync_playwright
 from classify import is_3d, parse_material, parse_price, parse_reviews, parse_sold, parse_store_info
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "app"))  # paths.py mora em scripts/app
+import proc  # noqa: E402
 from paths import DATA  # noqa: E402
 
 PROFILES_DIR = DATA / "db" / "profiles"
@@ -56,7 +56,7 @@ def open_for_login(profile, url):
     u = urlparse(url)
     if u.scheme != "https" or not any((u.hostname or "") == h or (u.hostname or "").endswith("." + h) for h in LOGIN_HOSTS):
         raise ValueError("só abro sites de Mercado Livre, MakerWorld, Printables e Thingiverse")
-    subprocess.Popen([chrome_path(), f"--user-data-dir={PROFILES_DIR / profile}", "--no-first-run", "--no-default-browser-check", url])
+    proc.popen([chrome_path(), f"--user-data-dir={PROFILES_DIR / profile}", "--no-first-run", "--no-default-browser-check", url], show=True)
 
 
 def extract_links(hrefs):

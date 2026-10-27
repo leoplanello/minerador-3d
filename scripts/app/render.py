@@ -1,7 +1,7 @@
 """Gera as fotos do anúncio a partir do modelo 3D usando o Blender portátil (tools/blender)."""
 import json
 import re
-import subprocess
+import proc
 import tempfile
 import zipfile
 from pathlib import Path
@@ -115,9 +115,9 @@ def render_images(model, outdir, cfg=None, title=""):
         err = ""
         for engine in ("EEVEE", "CYCLES"):
             try:
-                r = subprocess.run([str(BLENDER), "-b", "-P", str(SCENE), "--", str(stl), str(outdir), str(cfgfile), engine],
+                r = proc.run([str(BLENDER), "-b", "-P", str(SCENE), "--", str(stl), str(outdir), str(cfgfile), engine],
                                    capture_output=True, text=True, timeout=900)
-            except subprocess.TimeoutExpired:
+            except proc.TimeoutExpired:
                 raise ValueError("a geração das imagens passou de 15 minutos")
             files = sorted(outdir.glob("render_*.jpg"))
             if len(files) == len(cfg["views"]):
