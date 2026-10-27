@@ -92,3 +92,10 @@ def test_licenca_lida_da_pagina_do_makerworld_e_do_thingiverse():
 def test_titulo_do_thingiverse_sem_o_texto_da_miniatura():
     out = ms.extract_model_links("thingiverse", [dict(href="https://www.thingiverse.com/thing:1?x=1", alt="Thumbnail representing Spray-can holder", text="")])
     assert out[0]["title"] == "Spray-can holder"
+
+
+def test_resultados_de_varios_termos_se_intercalam_sem_repetir():
+    a = [dict(source="printables", id=str(i)) for i in (1, 2, 3, 4)]
+    b = [dict(source="printables", id=str(i)) for i in (2, 5, 6)]
+    assert [r["id"] for r in ms.round_robin([a, b], 5)] == ["1", "2", "5", "3", "6"]
+    assert ms.round_robin([], 3) == []

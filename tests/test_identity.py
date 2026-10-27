@@ -60,3 +60,12 @@ def test_sem_foto_ou_sem_previa_levanta_erro(tmp_path, monkeypatch):
     monkeypatch.setattr(identity, "download", lambda url, dst: img(dst))
     with pytest.raises(ValueError, match="faltam fotos"):
         identity.score_candidates("x", [img(tmp_path / "a.png")], [dict(id="1", title="t", thumb="")], ask=lambda p, w: "")
+
+
+def test_termos_pela_foto(tmp_path):
+    foto = img(tmp_path / "a.png")
+    saida = json.dumps({"descricao": "suporte preto com duas garras", "termos": ["router wall mount", " router  wall mount ", "modem bracket", ""]})
+    d = identity.visual_terms("Suporte roteador", foto, ask=lambda prompt, wd: saida)
+    assert d == dict(descricao="suporte preto com duas garras", termos=["router wall mount", "modem bracket"])  # sem repetidos nem vazios
+    with pytest.raises(ValueError):
+        identity.visual_terms("x", foto, ask=lambda p, w: "sem json")

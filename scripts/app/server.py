@@ -554,21 +554,44 @@ def browser_headless():
 model_headless = browser_headless
 
 
-def run_model_search(lid, q, profile, sites, headless=None):
+def expand_terms(lid, q, job):
+    """Termos de busca: o digitado mais os tirados da FOTO do anúncio pelo Claude (o título em português nem sempre acha o modelo nos sites em inglês)."""
+    photo = IMAGES / f"{lid}.img"
+    if not photo.is_file():
+        return [q]
+    with db() as c:
+        row = c.execute("SELECT title FROM listings WHERE id=?", (lid,)).fetchone()
+    job["msg"] = "Lendo a foto do anúncio para ampliar os termos de busca…"
+    try:
+        vis = identity.visual_terms(row["title"] if row else q, photo)
+    except ValueError as e:
+        job["notes"].append("termos pela foto indisponíveis: " + str(e)[:120])
+        return [q]
+    job["desc"] = vis["descricao"]
+    return list(dict.fromkeys([q] + vis["termos"]))[:6]
+
+
+def run_model_search(lid, q, profile, sites, headless=None, expand=True):
     headless = model_headless() if headless is None else headless
     job = MODEL_JOBS[lid] = dict(status="running", results=[], notes=[], msg="Buscando no Printables…", q=q, sites=sites, headless=headless)
     try:
+        terms = expand_terms(lid, q, job) if expand else [q]
+        job["terms"] = terms
+        job["msg"] = "Buscando no Printables…"
         if "printables" in sites:
-            try:
-                job["results"] += model_search.search_printables(q)
-            except ValueError as e:
-                job["notes"].append(str(e))
+            lists = []
+            for tm in terms:
+                try:
+                    lists.append([dict(r, query=tm) for r in model_search.search_printables(tm, 10)])
+                except ValueError as e:
+                    job["notes"].append(str(e))
+            job["results"] += model_search.round_robin(lists, 8)
         browser = [x for x in sites if x in model_search.BROWSER_SITES]
         show = ["printables"] if "printables" in sites and not headless and profile else []  # só para você ver a busca na janela
         if (browser or show) and profile:
             job["msg"] = ("Abrindo o Chrome" if not headless else "Buscando em segundo plano") + ". Se pedir verificação, resolva na janela."
             with browser_lock:
-                r, n = model_search.search_browser(q, profile, show + browser, on_captcha=lambda p, kind="captcha": popup(*MANUAL[kind]) if p else None, headless=headless)
+                r, n = model_search.search_browser(terms[:4], profile, show + browser, on_captcha=lambda p, kind="captcha": popup(*MANUAL[kind]) if p else None, headless=headless)
             job["results"] += r
             job["notes"] += n
         elif browser:
@@ -581,7 +604,7 @@ def run_model_search(lid, q, profile, sites, headless=None):
         job.update(status="done")
     except Exception as e:
         job.update(status="error", msg=str(e)[:300])
-    put_setting(f"msearch:{lid}", {k: job.get(k) for k in ("q", "sites", "headless", "results", "notes", "msg", "verdict", "best")} | dict(at=datetime.now().isoformat(timespec="seconds")))
+    put_setting(f"msearch:{lid}", {k: job.get(k) for k in ("q", "sites", "headless", "results", "notes", "msg", "verdict", "best", "desc", "terms")} | dict(at=datetime.now().isoformat(timespec="seconds")))
 
 
 def compare_with_ad(lid, job):
