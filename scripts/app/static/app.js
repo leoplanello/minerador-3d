@@ -552,6 +552,7 @@ const VID_FIELDS = [
   {k:'music', l:'Usar a música de fundo enviada', t:'check'},
   {k:'music_volume', l:'Volume da música (0 a 1)', t:'number', min:0, max:1, step:0.05},
   {k:'fps', l:'Quadros por segundo', t:'select', o:{24:'24 (cinema)', 30:'30 (padrão)', 60:'60 (fluido)'}},
+  {k:'contexto', l:'Cenário das vistas "em uso"', t:'select', o:{auto:'Automático (pelo título)', parede:'Parede', mesa:'Mesa de madeira'}},
   {k:'quality', l:'Qualidade do arquivo', t:'select', o:{rapido:'Rápida (arquivo menor)', normal:'Normal', alta:'Alta (maior)'}}];
 
 const HINTS = {
@@ -564,7 +565,7 @@ const HINTS = {
   caption_pos: 'Embaixo evita cobrir a peça.', caption_color: 'Escuro no fundo claro; claro com a caixa escura.', caption_box: 'A caixa dá leitura em qualquer fundo.',
   background_v: '', music: 'Envie uma música livre de direitos antes.', music_volume: '0,15 a 0,3 deixa a voz clara.', fps: '30 é o padrão; 24 dá aspecto de cinema e arquivo menor.', quality_v: 'Alta gera arquivo maior.'};
 const IMG_PRESETS = [
-  {k:'ml', l:'Mercado Livre (foto principal)', d:'Fundo branco puro, peça perto, luz normal: o padrão que o ML aceita.', c:{background:'white', finish:'matte', light:'normal', fill:'perto', shadow:true, quality:'normal', turn:0, views:['frente','lado','cima','tras']}},
+  {k:'ml', l:'Mercado Livre (foto principal)', d:'Fundo branco puro, peça perto, luz normal: o padrão que o ML aceita.', c:{background:'white', finish:'matte', light:'normal', fill:'perto', shadow:true, quality:'normal', turn:0, views:['frente','uso','uso_perto','lado']}},
   {k:'vitrine', l:'Vitrine (cinza suave)', d:'Fundo cinza claro e luz suave, 4 vistas. Bom para o carrossel.', c:{background:'gray', finish:'matte', light:'soft', fill:'medio', shadow:true, quality:'normal', turn:0, views:['frente','lado','cima','tras']}},
   {k:'destaque', l:'Destaque (brilho e detalhe)', d:'Acabamento seda, luz forte e um detalhe em zoom. Chama atenção no feed.', c:{background:'warm', finish:'silk', light:'strong', fill:'perto', shadow:true, quality:'alta', turn:0, views:['frente','detalhe','topo']}},
   {k:'teste', l:'Teste rápido', d:'Qualidade rápida e 2 vistas, para conferir o enquadramento em cerca de 1 min.', c:{quality:'rapido', size:800, views:['frente','topo']}}];

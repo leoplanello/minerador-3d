@@ -430,10 +430,10 @@ def run_images(lid, cfg):
         with render_lock:
             step("running")
             with db() as c:
-                m = c.execute("SELECT file_path FROM models WHERE listing_id=?", (lid,)).fetchone()
+                m = c.execute("SELECT m.file_path, l.title FROM models m JOIN listings l ON l.id=m.listing_id WHERE m.listing_id=?", (lid,)).fetchone()
             if not m or not m["file_path"]:
                 raise ValueError("envie o modelo 3D antes de gerar as imagens")
-            renderizar.render_images(ROOT / m["file_path"], PRODUCTS / str(lid) / "renders", cfg)
+            renderizar.render_images(ROOT / m["file_path"], PRODUCTS / str(lid) / "renders", cfg, title=m["title"] or "")
             step("ok")
     except Exception as e:  # erro fica visível no card da GUI
         step("error", str(e)[:300])
