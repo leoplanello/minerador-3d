@@ -569,6 +569,9 @@ def compare_with_ad(lid, job):
     try:
         job["best"], job["verdict"] = identity.score_candidates(row["title"] if row else "", [photo], job["results"])
         job["msg"] = job["msg"].replace(". Comparando com a foto do anúncio…", "")
+        skipped = sum(1 for r in job["results"] if "identity" not in r)
+        if skipped:
+            job["notes"].append(f"{skipped} modelo(s) sem prévia legível não foram comparados")
         if job["verdict"] == "identico":
             auto_accept(lid, job)
         else:
