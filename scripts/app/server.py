@@ -26,6 +26,7 @@ import render as renderizar  # noqa: E402
 import slice as fatiar  # noqa: E402
 import video as videos  # noqa: E402
 import identity  # noqa: E402
+import polyhaven  # noqa: E402
 import texto  # noqa: E402  (scripts/app/slice.py; mesmo diretório do server.py)
 from classify import score  # noqa: E402
 import model_search  # noqa: E402
@@ -434,6 +435,10 @@ def run_images(lid, cfg):
                 m = c.execute("SELECT m.file_path, l.title FROM models m JOIN listings l ON l.id=m.listing_id WHERE m.listing_id=?", (lid,)).fetchone()
             if not m or not m["file_path"]:
                 raise ValueError("envie o modelo 3D antes de gerar as imagens")
+            try:
+                polyhaven.ensure()  # sala com ativos CC0 (uns 12 MB, baixados uma vez); sem rede, o Blender usa o cenário simples
+            except Exception:
+                pass
             renderizar.render_images(ROOT / m["file_path"], PRODUCTS / str(lid) / "renders", cfg, title=m["title"] or "")
             step("ok")
     except Exception as e:  # erro fica visível no card da GUI

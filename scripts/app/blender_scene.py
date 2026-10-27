@@ -5,6 +5,7 @@ Vistas de estúdio: peça sobre fundo liso (a foto principal do ML). Vistas "uso
 import json
 import math
 import sys
+from pathlib import Path
 
 import bpy
 from mathutils import Matrix, Vector
@@ -135,9 +136,104 @@ world_ctx.node_tree.nodes["Background"].inputs["Strength"].default_value = 0.9
 obj_ctx = obj.copy()  # mesma malha e material, posição própria
 bpy.context.collection.objects.link(obj_ctx)
 ctx.append(obj_ctx)
+
+
+# ---------- sala realista (ativos CC0 do Poly Haven em cfg["polyhaven"]; sem eles, o cenário procedural abaixo) ----------
+PH = Path(cfg["polyhaven"]) if cfg.get("polyhaven") else None
+
+
+def tex_material(name, folder, tile, axes):
+    """Material com as texturas do Poly Haven (cor, rugosidade, normal) projetadas pela posição no mundo, em mm: tile = tamanho real de um ladrilho."""
+    m = bpy.data.materials.new(name)
+    m.use_nodes = True
+    nt, b = m.node_tree, m.node_tree.nodes["Principled BSDF"]
+    sep, comb, mp = nt.nodes.new("ShaderNodeSeparateXYZ"), nt.nodes.new("ShaderNodeCombineXYZ"), nt.nodes.new("ShaderNodeMapping")
+    nt.links.new(nt.nodes.new("ShaderNodeNewGeometry").outputs["Position"], sep.inputs[0])
+    nt.links.new(sep.outputs[axes[0]], comb.inputs["X"])
+    nt.links.new(sep.outputs[axes[1]], comb.inputs["Y"])
+    mp.inputs["Scale"].default_value = (1 / tile,) * 3
+    nt.links.new(comb.outputs[0], mp.inputs["Vector"])
+
+    def image(fname, color):
+        n = nt.nodes.new("ShaderNodeTexImage")
+        n.image = bpy.data.images.load(str(folder / fname))
+        if not color:
+            n.image.colorspace_settings.name = "Non-Color"
+        nt.links.new(mp.outputs[0], n.inputs["Vector"])
+        return n
+    nt.links.new(image("diff.jpg", True).outputs["Color"], b.inputs["Base Color"])
+    nt.links.new(image("rough.jpg", False).outputs["Color"], b.inputs["Roughness"])
+    nm = nt.nodes.new("ShaderNodeNormalMap")
+    nt.links.new(image("nor.jpg", False).outputs["Color"], nm.inputs["Color"])
+    nt.links.new(nm.outputs["Normal"], b.inputs["Normal"])
+    return m
+
+
+def furniture(asset, x, y, rot_deg, z=0.0):
+    """Importa um modelo glTF do Poly Haven (metros) para a cena em mm, com o centro em (x, y) e a base em z. Devolve os objetos criados."""
+    before = set(bpy.data.objects)
+    bpy.ops.import_scene.gltf(filepath=str(PH / asset / f"{asset}.gltf"))
+    new = [o for o in bpy.data.objects if o not in before]
+    grp = bpy.data.objects.new(asset, None)
+    bpy.context.collection.objects.link(grp)
+    for o in new:
+        if o.parent is None:
+            o.parent = grp
+    grp.scale = (1000, 1000, 1000)
+    grp.rotation_euler.z = math.radians(rot_deg)
+    bpy.context.view_layer.update()
+    pts = [o.matrix_world @ Vector(c) for o in new if o.type == "MESH" for c in o.bound_box]
+    lo_, hi_ = Vector((min(p[i] for p in pts) for i in range(3))), Vector((max(p[i] for p in pts) for i in range(3)))
+    grp.location += Vector((x - (lo_.x + hi_.x) / 2, y - (lo_.y + hi_.y) / 2, z - lo_.z))
+    bpy.context.view_layer.update()
+    return new + [grp], hi_.z - lo_.z + z
+
+
+def room_scene():
+    """Parede e piso com texturas reais, sofá, mesa lateral e planta em escala real, HDRI de ambiente. Devolve o ponto que a câmera mira (a peça)."""
+    wall = tex_material("sala-parede", PH / "plastered_wall_04", 3200, ("X", "Z"))
+    floor = tex_material("sala-piso", PH / "laminate_floor_02", 1700, ("X", "Y"))
+    ctx.append(plane((0, 0.5, 1300), (math.radians(90), 0, 0), (9000, 2600), wall, "parede-sala"))
+    ctx.append(plane((0, -2500, 0), (0, 0, 0), (9000, 5000), floor, "piso-sala"))
+    sofa, sofa_top = furniture("Sofa_01", 300, -520, 0)
+    plant, _ = furniture("potted_plant_01", 2000, -400, 0)
+    ctx.extend(sofa + plant)
+    if ctx_kind == "mesa":  # a peça sobre a mesa lateral, à frente do sofá
+        tbl, top = furniture("side_table_01", -150, -900, 0)
+        ctx.extend(tbl)
+        obj_ctx.location = (-150, -900, top)
+        bpy.context.view_layer.update()
+        lo2, hi2 = bounds(obj_ctx)
+        obj_ctx.location += Vector((-150 - (lo2.x + hi2.x) / 2, -900 - (lo2.y + hi2.y) / 2, top - lo2.z))
+    else:
+        tbl, _ = furniture("side_table_01", -1750, -300, 0)
+        ctx.extend(tbl)
+        up_ax = max((i for i in range(3) if i != back_ax), key=lambda i: dims0[i])
+        up = Vector((1 if i == up_ax else 0) for i in range(3))
+        obj_ctx.rotation_mode = "QUATERNION"
+        obj_ctx.rotation_quaternion = Matrix((back.cross(up), back, up)).to_quaternion()
+        obj_ctx.location = (0, 0, 0)
+        bpy.context.view_layer.update()
+        clo, chi = bounds(obj_ctx)
+        obj_ctx.location = Vector((-(clo.x + chi.x) / 2, -chi.y, 1250 - (clo.z + chi.z) / 2))  # costas na parede, centro a 1,25 m do piso
+    bpy.context.view_layer.update()
+    clo, chi = bounds(obj_ctx)
+    nt = world_ctx.node_tree
+    nt.nodes.clear()
+    env, bg, out, tc, mp = (nt.nodes.new(t) for t in ("ShaderNodeTexEnvironment", "ShaderNodeBackground", "ShaderNodeOutputWorld", "ShaderNodeTexCoord", "ShaderNodeMapping"))
+    env.image = bpy.data.images.load(str(next((PH / "brown_photostudio_05").glob("*.hdr"))))
+    mp.inputs["Rotation"].default_value[2] = math.radians(cfg.get("hdri_rot", 200))
+    bg.inputs["Strength"].default_value = 2.5
+    nt.links.new(tc.outputs["Generated"], mp.inputs["Vector"])
+    nt.links.new(mp.outputs[0], env.inputs["Vector"])
+    nt.links.new(env.outputs["Color"], bg.inputs["Color"])
+    nt.links.new(bg.outputs[0], out.inputs["Surface"])
+    return (clo + chi) / 2
 wall_m, wall_b = make_mat("parede", 0.95)
 procedural(wall_m, wall_b, 400, [(0.55, 0.50, 0.44), (0.64, 0.59, 0.52)], kind="NOISE", bump=0.05)
-if ctx_kind == "parede":
+if PH:
+    target = room_scene()
+elif ctx_kind == "parede":
     # a face de trás encosta na parede (y = 0); o maior lado restante fica na vertical
     up_ax = max((i for i in range(3) if i != back_ax), key=lambda i: dims0[i])
     up = Vector((1 if i == up_ax else 0) for i in range(3))
@@ -167,14 +263,14 @@ sun_dir.normalize()
 bpy.ops.object.light_add(type="SUN", location=target - sun_dir * size * 8)
 sun = bpy.context.object
 sun.data.energy = {"soft": 1.0, "normal": 1.5, "strong": 2.2}[cfg["light"]]
-sun.data.angle = math.radians(2.5)
+sun.data.angle = math.radians(6 if PH else 2.5)
 sun.data.color = (1.0, 0.94, 0.84)
 sun.rotation_euler = sun_dir.to_track_quat("-Z", "Y").to_euler()
 ctx.append(sun)
 q = sun_dir.to_track_quat("-Z", "Y")
 bars = [  # (x, y, largura, altura) no plano da janela, em tamanhos da peça: moldura com cruz
     (-20, 0, 12, 60), (20, 0, 12, 60), (0, 16, 60, 12), (0, -16, 60, 12), (-1.6, 0, 0.5, 20), (1.4, 0, 0.5, 20), (0, 0.6, 20, 0.5)]
-for ox, oy, w, h in bars:
+for ox, oy, w, h in ([] if PH else bars):  # na sala a janela é o HDRI; o caixilho de sombra é só do cenário simples
     bpy.ops.mesh.primitive_cube_add(size=1)
     b = bpy.context.object
     b.location = target - sun_dir * size * 5 + q @ Vector((ox * size - 0.6 * size, oy * size + 0.3 * size, 0))
@@ -189,6 +285,7 @@ if engine == "CYCLES":
     scene.cycles.samples = cfg["samples_cycles"]
     scene.cycles.device = "CPU"
     scene.cycles.use_denoising = True
+    scene.cycles.denoiser = "OPENIMAGEDENOISE"
 else:
     scene.eevee.taa_render_samples = cfg["samples_eevee"]
 scene.render.resolution_x = scene.render.resolution_y = cfg["size"]
@@ -200,6 +297,7 @@ bpy.ops.object.camera_add()
 cam = bpy.context.object
 scene.camera = cam
 cam.data.lens = 50
+cam.data.clip_start, cam.data.clip_end = 1, 100000  # a cena é em mm: o padrão (100) cortaria a sala
 for i, (name, az, el, zoom) in enumerate(cfg["views"], 1):
     in_use = name.startswith("uso")
     for o in studio:
@@ -208,13 +306,23 @@ for i, (name, az, el, zoom) in enumerate(cfg["views"], 1):
     for o in ctx:
         o.hide_render = not in_use
     scene.world = world_ctx if in_use else world_studio
-    dist = size * cfg["dist"] * zoom
+    if in_use and cfg.get("still_cycles", True) and engine != "CYCLES":  # as fotos "em uso" saem em Cycles com denoiser; o estúdio é rápido no EEVEE
+        scene.render.engine = "CYCLES"
+        scene.cycles.samples = cfg["samples_cycles"]
+        scene.cycles.device = "CPU"
+        scene.cycles.use_denoising = True
+        scene.cycles.denoiser = "OPENIMAGEDENOISE"
+    elif engine != "CYCLES":
+        scene.render.engine = "BLENDER_EEVEE_NEXT"
+    wide = bool(PH) and in_use and zoom >= 1  # na sala, a vista aberta mostra o ambiente: câmera longe e lente curta
+    dist = min(max(size * 12, 1200), 2600) if wide else size * cfg["dist"] * zoom
+    cam.data.lens = 30 if wide else 50
     focus = target if in_use else center
     a, e = math.radians(az + (-90 if in_use else cfg["turn"])), math.radians(el)
     cam.location = focus + Vector((dist * math.cos(e) * math.cos(a), dist * math.cos(e) * math.sin(a), dist * math.sin(e)))
     aim(cam, focus)
     cam.data.dof.use_dof = in_use  # fundo desfocado dá a cara de foto de ambiente
     cam.data.dof.focus_distance = (cam.location - focus).length
-    cam.data.dof.aperture_fstop = 2.8
+    cam.data.dof.aperture_fstop = 4.0 if wide else 2.0 if PH else 2.8
     scene.render.filepath = f"{outdir}/render_{i}.jpg"
     bpy.ops.render.render(write_still=True)

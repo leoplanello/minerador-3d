@@ -1,6 +1,7 @@
 """Gera as fotos do anúncio a partir do modelo 3D usando o Blender portátil (tools/blender)."""
 import json
 import re
+import polyhaven
 import proc
 import tempfile
 import zipfile
@@ -105,7 +106,7 @@ def render_images(model, outdir, cfg=None, title=""):
     for old in outdir.glob("render_*.jpg"):
         old.unlink()
     with tempfile.TemporaryDirectory() as tmp:
-        scene_cfg = cfg | dict(views=[(v, *VIEWS[v]) for v in cfg["views"]], contexto=scene_for(cfg, title), samples_eevee=QUALITY[cfg["quality"]][0], samples_cycles=QUALITY[cfg["quality"]][1], dist=FILL[cfg["fill"]])
+        scene_cfg = cfg | dict(polyhaven=str(polyhaven.ROOT) if polyhaven.available() else "", views=[(v, *VIEWS[v]) for v in cfg["views"]], contexto=scene_for(cfg, title), samples_eevee=QUALITY[cfg["quality"]][0], samples_cycles=QUALITY[cfg["quality"]][1], dist=FILL[cfg["fill"]])
         cfgfile = Path(tmp) / "cfg.json"
         cfgfile.write_text(json.dumps(scene_cfg), encoding="utf-8")
         stl = Path(model)
