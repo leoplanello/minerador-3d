@@ -228,3 +228,71 @@ def price_band(rows, me_id=None):
         return None
     mid = prices[len(prices) // 2] if len(prices) % 2 else (prices[len(prices) // 2 - 1] + prices[len(prices) // 2]) / 2
     return dict(min=prices[0], median=round(mid, 2), max=prices[-1], n=len(prices))
+
+
+# ---------- tese do produto: dor, faixa de preço, similares ----------
+def ask_claude(prompt, workdir):
+    """`claude -p` com a ferramenta Read (para ver a foto do anúncio). Levanta ValueError com o motivo."""
+    import proc
+    import texto
+    r = proc.run([texto._cmd(), "-p", "--allowedTools", "Read", "--add-dir", str(workdir)], input=prompt, capture_output=True, text=True, timeout=300, encoding="utf-8")
+    if r.returncode != 0:
+        raise ValueError(f"o Claude retornou erro: {(r.stderr or r.stdout)[:200]}")
+    return r.stdout
+
+
+def thesis_prompt(title, photo, similar_titles):
+    outros = "\n".join(f"- {t[:90]}" for t in similar_titles[:8]) or "- (nenhum outro anúncio parecido lido ainda)"
+    return f"""Use a ferramenta Read para ver a imagem {photo}: é a foto de um anúncio de venda de um produto impresso em 3D: «{title[:120]}».
+Outros anúncios parecidos já lidos:
+{outros}
+
+Escreva a TESE do produto em duas partes:
+1. "dor": a dor ou necessidade do cliente que o produto resolve, em UMA frase em português, concreta (quem sente, em que situação).
+2. "similares": de 4 a 6 TIPOS de produto parecidos que resolvem a mesma dor (nome genérico em português, com um termo curto de busca para o Mercado Livre). Não invente marcas nem anúncios.
+Responda SOMENTE com JSON: {{"dor": "...", "similares": [{{"nome": "...", "busca": "..."}}]}}"""
+
+
+def parse_thesis(text):
+    import json
+    m = re.search(r"\{.*\}", text, re.S)
+    if not m:
+        raise ValueError("a resposta do Claude não trouxe JSON")
+    try:
+        d = json.loads(m.group(0))
+        dor = re.sub(r"\s*—\s*", ", ", re.sub(r"\s+", " ", str(d["dor"]))).strip()[:300]
+        sim = [dict(nome=re.sub(r"\s+", " ", str(s["nome"])).strip()[:80], busca=re.sub(r"\s+", " ", str(s.get("busca", s["nome"]))).strip()[:60]) for s in d["similares"] if str(s.get("nome", "")).strip()]
+    except (ValueError, KeyError, TypeError, AttributeError):
+        raise ValueError("o JSON da tese veio quebrado")
+    if not dor or not sim:
+        raise ValueError("a tese veio sem a dor ou sem similares")
+    return dict(dor=dor, similares=sim[:6])
+
+
+def propose_thesis(title, photo, similar_titles, ask=ask_claude):
+    """O Claude propõe a dor e os tipos de produto parecidos a partir da foto e dos títulos; a pessoa edita depois."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        from PIL import Image
+        jpg = Path(tmp) / "anuncio.jpg"
+        im = Image.open(photo).convert("RGB")
+        im.thumbnail((640, 640))
+        im.save(jpg, quality=88)
+        return parse_thesis(ask(thesis_prompt(title, jpg, similar_titles), tmp))
+
+
+def clean_thesis(d):
+    """Valida a tese editada na tela. faixa: preços mínimo e máximo que o cliente aceita pagar (R$) ou vazio."""
+    try:
+        lo = float(d["faixa_min"]) if str(d.get("faixa_min", "")).strip() else None
+        hi = float(d["faixa_max"]) if str(d.get("faixa_max", "")).strip() else None
+    except (TypeError, ValueError):
+        raise ValueError("faixa de preço inválida")
+    if (lo is not None and lo < 0) or (hi is not None and hi < 0) or (lo is not None and hi is not None and lo > hi):
+        raise ValueError("a faixa de preço precisa ter mínimo menor que o máximo")
+    sim = []
+    for s in d.get("similares", []):
+        nome, busca = str(s.get("nome", "")).strip()[:80], str(s.get("busca", "")).strip()[:60]
+        if nome:
+            sim.append(dict(nome=nome, busca=busca or nome))
+    return dict(dor=str(d.get("dor", "")).strip()[:300], faixa_min=lo, faixa_max=hi, similares=sim[:10])

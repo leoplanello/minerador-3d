@@ -90,3 +90,23 @@ def test_anuncios_parecidos_e_faixa_de_preco():
     assert [r["id"] for r in sim] == [1, 2, 3]
     assert sel.price_band(sim, me_id=1) == dict(min=25.0, median=35.0, max=45.0, n=2) and sel.price_band([sim[0]], me_id=1) is None
     assert sel.similarity("Vaso Azul", "Porta Chaves") == 0
+
+
+def test_tese_proposta_pelo_claude_e_editada_na_tela(tmp_path):
+    from PIL import Image
+    foto = tmp_path / "f.img"
+    Image.new("RGB", (300, 400), (30, 30, 30)).save(foto, format="PNG")
+    visto = {}
+    resp = '{"dor": "Quem tem roteador na mesa quer liberar espaço — sem furar a parede.", "similares": [{"nome": "Suporte de modem", "busca": "suporte modem parede"}, {"nome": "", "busca": "x"}, {"nome": "Prateleira para roteador"}]}'
+    t = sel.propose_thesis("Suporte Roteador", foto, ["Suporte Modem Parede"], ask=lambda prompt, wd: visto.update(p=prompt) or resp)
+    assert t["dor"].startswith("Quem tem roteador na mesa quer liberar espaço, sem") and [s["nome"] for s in t["similares"]] == ["Suporte de modem", "Prateleira para roteador"]
+    assert t["similares"][1]["busca"] == "Prateleira para roteador" and "Suporte Modem Parede" in visto["p"] and "Suporte Roteador" in visto["p"]
+    for ruim in ("sem json", '{"dor": "", "similares": []}', '{"dor": "a"}'):
+        with pytest.raises(ValueError):
+            sel.parse_thesis(ruim)
+    ok = sel.clean_thesis(dict(dor=" liberar a mesa ", faixa_min="25", faixa_max="39,9".replace(",", "."), similares=[dict(nome="a"), dict(nome=" ")]))
+    assert ok == dict(dor="liberar a mesa", faixa_min=25.0, faixa_max=39.9, similares=[dict(nome="a", busca="a")])
+    assert sel.clean_thesis(dict(dor="x"))["faixa_min"] is None
+    for ruim in (dict(faixa_min="40", faixa_max="30"), dict(faixa_min="abc"), dict(faixa_min="-1")):
+        with pytest.raises(ValueError):
+            sel.clean_thesis(ruim)

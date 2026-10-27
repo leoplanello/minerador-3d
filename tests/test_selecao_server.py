@@ -114,3 +114,24 @@ def test_api_de_filtros_e_similares(tmp_path, monkeypatch):
             assert e.code == 404
     finally:
         srv.shutdown()
+
+
+def test_tese_proposta_guarda_dor_similares_e_faixa_dos_parecidos(tmp_path, monkeypatch):
+    banco(tmp_path, monkeypatch)
+    from PIL import Image
+    monkeypatch.setattr(server, "IMAGES", tmp_path / "img")
+    (tmp_path / "img").mkdir()
+    Image.new("RGB", (50, 50)).save(tmp_path / "img" / "1.img", format="PNG")
+    visto = {}
+    monkeypatch.setattr(server.selecao, "propose_thesis", lambda title, photo, titles: visto.update(titles=titles) or dict(dor="liberar a mesa", similares=[dict(nome="Suporte de modem", busca="suporte modem")]))
+    server.propose_tese(1)
+    t = {r["id"]: r for r in server.candidates()}[1]["tese"]
+    assert t["status"] == "ok" and t["dor"] == "liberar a mesa" and t["proposta"] is True
+    assert (t["faixa_min"], t["faixa_max"]) == (45.0, 45.0) and visto["titles"] == ["Suporte Roteador Modem Parede Vertical"]  # só o parecido entra, sem o próprio produto
+    monkeypatch.setattr(server.selecao, "propose_thesis", lambda *a: (_ for _ in ()).throw(ValueError("sem Claude")))
+    server.propose_tese(1)
+    t = server.get_setting("tese:1")
+    assert t["status"] == "error" and "sem Claude" in t["msg"] and t["dor"] == "liberar a mesa"  # o erro não apaga o que já estava
+    (tmp_path / "img" / "1.img").unlink()
+    server.propose_tese(1)
+    assert "sem a foto" in server.get_setting("tese:1")["msg"]

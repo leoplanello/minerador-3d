@@ -811,6 +811,25 @@ def eval_filters(lid, support=True):
     return data
 
 
+def propose_tese(lid):
+    """O Claude propõe a dor e os tipos de produto parecidos a partir da foto e dos títulos. A faixa de preço vem dos anúncios parecidos já lidos. A pessoa edita depois."""
+    prev = get_setting(f"tese:{lid}") or {}
+    put_setting(f"tese:{lid}", dict(prev, status="running", msg=""))
+    try:
+        cands = candidates()
+        me = next(c for c in cands if c["id"] == lid)
+        photo = IMAGES / f"{lid}.img"
+        if not photo.is_file():
+            raise ValueError("sem a foto do anúncio guardada")
+        sim = selecao.similar_rows(me, cands)
+        t = selecao.propose_thesis(me["title"], photo, [r["title"] for r in sim if r["id"] != lid])
+        band = selecao.price_band(sim, lid)
+        put_setting(f"tese:{lid}", dict(status="ok", msg="", dor=t["dor"], similares=t["similares"], faixa_min=band["min"] if band else None, faixa_max=band["max"] if band else None,
+                                        faixa_fonte="anúncios parecidos lidos" if band else "", proposta=True))
+    except Exception as e:
+        put_setting(f"tese:{lid}", dict(prev, status="error", msg=str(e)[:200]))
+
+
 def set_created(lid, created):
     created = str(created or "").strip()
     if created and selecao.age_days(created) is None:
@@ -857,7 +876,7 @@ def candidates():
                                       steps=steps))
             mesh = get_setting(f"mesh:{l['id']}", {}) or {}
             spd = selecao.sales_per_day(last["sold"], l["created"])
-            rows[-1].update(filtros=selecao.evaluate(l["title"], F, mesh.get("stats"), sl["minutes"] if sl else None, mesh.get("support")) | dict(mesh_msg=mesh.get("msg", ""), mesh_status=mesh.get("status", ""),
+            rows[-1].update(tese=get_setting(f"tese:{l['id']}"), filtros=selecao.evaluate(l["title"], F, mesh.get("stats"), sl["minutes"] if sl else None, mesh.get("support")) | dict(mesh_msg=mesh.get("msg", ""), mesh_status=mesh.get("status", ""),
                             stats=mesh.get("stats")), per_day=spd, age_days=selecao.age_days(l["created"]), champion=selecao.is_champion(spd, F))
         return sorted(rows, key=lambda r: (r["filtros"]["status"] == "reprovado", -r["score"]))  # reprovados nos filtros vão para o fim
 
@@ -1271,6 +1290,22 @@ class H(BaseHTTPRequestHandler):
             except (ValueError, TypeError, KeyError) as e:
                 return self._json(dict(error=str(e)), 400)
             threading.Thread(target=lambda: eval_filters(lid), daemon=True).start()
+            return self._json(dict(ok=True))
+        if path == "/api/tese/propor":
+            try:
+                lid = int(data["id"])
+                if lid not in {c["id"] for c in candidates()}:
+                    raise ValueError("produto não encontrado")
+            except (ValueError, TypeError, KeyError) as e:
+                return self._json(dict(error=str(e)), 400)
+            threading.Thread(target=propose_tese, args=(lid,), daemon=True).start()
+            return self._json(dict(ok=True))
+        if path == "/api/tese":
+            try:
+                lid = int(data["id"])
+                put_setting(f"tese:{lid}", selecao.clean_thesis(data) | dict(status="ok", msg="", proposta=False))
+            except (ValueError, TypeError, KeyError) as e:
+                return self._json(dict(error=str(e)), 400)
             return self._json(dict(ok=True))
         if path == "/api/listing/created":
             try:

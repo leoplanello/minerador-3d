@@ -45,7 +45,7 @@ const SEL = {
   // ---------- cartão do produto ----------
   render(c) {
     const el = $('selcard'); if (!el) return;
-    const sig = JSON.stringify([c.filtros, c.per_day, c.age_days, c.created, c.price, c.sold]);
+    const sig = JSON.stringify([c.filtros, c.per_day, c.age_days, c.created, c.price, c.sold, c.tese]);
     if (this.sig[c.id] === sig && el.dataset.id === String(c.id)) return;       // nada mudou: não apaga o que se digita
     if (el.contains(document.activeElement) && document.activeElement.matches('input,textarea')) return;
     this.sig[c.id] = sig; el.dataset.id = c.id; el.hidden = false;
@@ -65,7 +65,9 @@ const SEL = {
           <button id="selsave" class="sm">Salvar data</button></div>
         <p class="small" style="margin:6px 0">${c.per_day == null ? 'Sem a data de publicação não dá para calcular. O Mercado Livre não mostra a data na página; informe a que você vê no anúncio ou no seu complemento do navegador.'
           : `<b>${String(c.per_day).replace('.', ',')} vendas por dia</b> (${num(c.sold)} vendidos em ${num(c.age_days)} dias)${c.champion ? ' · <span class="chip ok">campeão</span>' : ''}`}</p>
-        <div id="selsim" class="small mut">Procurando anúncios parecidos…</div></div>`;
+        <div id="selsim" class="small mut">Procurando anúncios parecidos…</div></div>
+      ${this.thesis(c)}`;
+    this.bindThesis(c);
     $('seleval').onclick = async () => { const r = await post('/api/filtros/avaliar', {id: c.id}); toast(r.error || 'Medindo e fatiando…'); load(); };
     $('selsave').onclick = async () => { const r = await post('/api/listing/created', {id: c.id, created: $('selcreated').value}); toast(r.error || 'Data salva'); if (!r.error) { delete this.sig[c.id]; load(); } };
     fetch('/api/similares?id=' + c.id).then(r => r.json()).then(r => { const box = $('selsim'); if (!box || r.error) return;
@@ -76,5 +78,27 @@ const SEL = {
           <td align="center">${x.per_day == null ? '—' : String(x.per_day).replace('.', ',')}</td><td>${esc(x.note || '')}</td></tr>`).join('')}</table>
         ${r.price ? `<div style="margin-top:6px">Preço dos concorrentes: ${price(r.price.min)} a ${price(r.price.max)} (mediana ${price(r.price.median)}, ${r.price.n} anúncios).</div>` : ''}`
         : 'Nenhum outro anúncio parecido entre os já lidos.'; });
+  },
+  // ---------- tese: dor, faixa de preço, similares ----------
+  thesis(c) {
+    const t = c.tese || {}, run = t.status === 'running';
+    return `<div class="sel-tese" style="margin-top:14px"><h3 style="margin:0 0 6px">Tese do produto</h3>
+      <p class="small mut" style="margin:0 0 6px">Três perguntas antes de produzir: que dor resolve, que preço o cliente aceita pagar, que produtos parecidos resolvem a mesma dor. O Claude propõe a partir da foto e dos títulos; você edita.</p>
+      <div class="form"><label>Dor que o produto resolve<textarea id="tdor" rows="2" maxlength="300">${esc(t.dor || '')}</textarea></label>
+        <div class="row"><label>Preço mínimo que o cliente aceita (R$)<input id="tmin" type="number" step="0.01" min="0" value="${t.faixa_min ?? ''}"></label>
+          <label>Preço máximo (R$)<input id="tmax" type="number" step="0.01" min="0" value="${t.faixa_max ?? ''}"></label></div>
+        ${t.faixa_fonte ? `<div class="small mut">Faixa tirada dos ${esc(t.faixa_fonte)}; ajuste se souber melhor.</div>` : ''}
+        <label>Produtos parecidos que resolvem a mesma dor (um por linha: nome | termo de busca)<textarea id="tsim" rows="4">${esc((t.similares || []).map(s => s.nome + (s.busca && s.busca !== s.nome ? ' | ' + s.busca : '')).join('\n'))}</textarea></label>
+        ${(t.similares || []).length ? `<div class="small">${t.similares.map(s => `<a href="https://lista.mercadolivre.com.br/${encodeURIComponent(s.busca)}" target="_blank" rel="noopener">${esc(s.nome)}</a>`).join(' · ')}</div>` : ''}
+        ${t.status === 'error' ? `<div class="small" style="color:var(--red)">${esc(t.msg)}</div>` : ''}
+        <div class="row"><button id="tprop" class="sm" ${run ? 'disabled' : ''}>${run ? 'O Claude está pensando…' : 'Propor com o Claude'}</button><button id="tsave" class="pri sm">Salvar tese</button></div></div></div>`;
+  },
+  bindThesis(c) {
+    const prop = $('tprop'); if (!prop) return;
+    prop.onclick = async () => { const r = await post('/api/tese/propor', {id: c.id}); toast(r.error || 'O Claude está lendo a foto e os títulos…'); load(); };
+    $('tsave').onclick = async () => {
+      const similares = $('tsim').value.split('\n').map(l => l.split('|').map(x => x.trim())).filter(p => p[0]).map(p => ({nome: p[0], busca: p[1] || p[0]}));
+      const r = await post('/api/tese', {id: c.id, dor: $('tdor').value, faixa_min: $('tmin').value, faixa_max: $('tmax').value, similares});
+      toast(r.error || 'Tese salva'); if (!r.error) { delete this.sig[c.id]; load(); } };
   },
 };
