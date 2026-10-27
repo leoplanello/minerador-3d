@@ -77,3 +77,9 @@ def test_fps_e_qualidade():
     for bad in ({"fps": 25}, {"quality": "x"}):
         with pytest.raises(ValueError):
             video.clean_video_cfg(bad)
+
+def test_legenda_longa_cabe_no_espaco_abaixo_da_imagem():
+    longa = "Olha esse suporte de parede para roteador e modem. Ele deixa o aparelho em pé, preso na parede, sem ocupar a mesa. " * 2
+    texto, fs = video.fit_caption(longa, 1080, 1920 * 0.2, 60)
+    assert len(texto.splitlines()) * fs * 1.3 <= 1920 * 0.2 and fs < 60 and max(map(len, texto.splitlines())) * 0.52 * fs <= 1080 * 0.9
+    assert chr(13) not in texto
