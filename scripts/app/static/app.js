@@ -424,10 +424,12 @@ const VIEWS = {
         const M = c.margin, row = (l, f) => `<tr><td>${l}</td><td class="num">${f(M.ml)}</td><td class="num">${f(M.shopee)}</td></tr>`;
         $('cstate').innerHTML = `Com base em ${Math.floor(c.slice.minutes / 60)} h ${c.slice.minutes % 60} min e ${c.slice.grams.toLocaleString('pt-BR', {minimumFractionDigits: 1, maximumFractionDigits: 1})} g. ${c.costs_confirmed ? '' : 'Os custos ainda são estimativas: <a href="#/config">ajuste em Configurações</a>.'}`;
         $('ctab').innerHTML = `<thead><tr><th></th><th>Mercado Livre</th><th>Shopee</th></tr></thead><tbody>` +
-          row('Produção (filamento, máquina, energia)', m => brl(m.producao)) + row('Garantia de reimpressão', m => brl(m.garantia)) +
-          row('Embalagem', m => brl(m.embalagem)) + row('Frete do vendedor', m => brl(m.frete)) + row('Comissão e taxas', m => brl(m.taxas)) +
+          row('Produção (filamento, máquina, energia)', m => brl(m.producao)) + row('Perdas e reimpressão', m => brl(m.garantia)) +
+          row('Embalagem', m => brl(m.embalagem)) + row('Frete do vendedor', m => brl(m.frete)) + row('Comissão e taxas', m => brl(m.taxas)) + row('Imposto sobre a venda', m => brl(m.imposto)) +
           row('<b>Lucro por peça</b>', m => `<b style="color:${m.lucro > 0 ? 'var(--green)' : 'var(--red)'}">${brl(m.lucro)}</b>`) +
-          row('<b>Margem</b>', m => `<b>${m.margem_pct.toLocaleString('pt-BR', {minimumFractionDigits: 1, maximumFractionDigits: 1})}%</b>`) + row('Preço mínimo para a margem alvo', m => m.preco_minimo ? brl(m.preco_minimo) : '—') + '</tbody>';
+          row('<b>Margem</b>', m => `<b>${m.margem_pct.toLocaleString('pt-BR', {minimumFractionDigits: 1, maximumFractionDigits: 1})}%</b>`) + row('Preço mínimo para a margem alvo', m => m.preco_minimo ? brl(m.preco_minimo) : '—') +
+          (c.margem_concorrente && c.margem_concorrente.ml ? (cm => { const f = x => x ? `${brl(x.lucro)} · ${x.margem_pct.toLocaleString('pt-BR', {minimumFractionDigits: 1, maximumFractionDigits: 1})}%` : '—';
+            return `<tr><td><b>Se vender ao preço do concorrente</b> (mediana ${brl(cm.ml.median.price)})</td><td class="num">${f(cm.ml.median)}</td><td class="num">${f((cm.shopee || {}).median)}</td></tr>`; })(c.margem_concorrente) : '') + '</tbody>';
       }
       $('mstate').textContent = hasFile ? `Arquivo: ${m.file_path.split('/').pop()}` : 'Cole o link do modelo, anote a licença e envie o arquivo. A etapa fica pronta quando o arquivo chega.';
     },

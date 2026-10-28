@@ -17,7 +17,7 @@ DEFAULTS = {
 LABELS = {
     "potencia_kw": "Potência média da impressora (kW)", "energia_rs_kwh": "Energia (R$/kWh)", "maquina_rs_h": "Desgaste da máquina (R$/hora)",
     "filamento_rs_kg": "Filamento (R$/kg)", "embalagem_rs": "Embalagem por peça (R$)", "frete_rs": "Frete pago pelo vendedor (R$)",
-    "garantia_pct": "Garantia de reimpressão (% do custo de produção)", "imposto_pct": "Imposto (%)", "ml_pct": "Comissão do Mercado Livre (%)",
+    "garantia_pct": "Margem para perdas e reimpressão (% do custo de produção)", "imposto_pct": "Imposto sobre a venda (%)", "ml_pct": "Comissão do Mercado Livre (%)",
     "shopee_pct": "Comissão da Shopee (%)", "shopee_fixa_rs": "Taxa fixa da Shopee (R$)", "margem_alvo_pct": "Margem alvo (%)",
 }
 
@@ -41,9 +41,22 @@ def calc(c, minutes, grams, price, channel="ml"):
 
     minimo = next((p / 10 for p in range(10, 10000) if lucro(p / 10) / (p / 10) * 100 >= c["margem_alvo_pct"]), None)
     l = lucro(price)
+    imposto = price * c["imposto_pct"] / 100  # separado das taxas (comissão + taxa fixa)
     return dict(producao=round(producao, 2), garantia=round(garantia, 2), embalagem=c["embalagem_rs"], frete=c["frete_rs"],
-                taxas=round(price - fixo - l, 2), custo_total=round(fixo, 2), lucro=round(l, 2),
+                imposto=round(imposto, 2), taxas=round(price - fixo - l - imposto, 2), custo_total=round(fixo, 2), lucro=round(l, 2),
                 margem_pct=round(l / price * 100, 1) if price else 0.0, preco_minimo=minimo)
+
+
+def at_competitor(c, minutes, grams, band, channel="ml"):
+    """Margem se o produto for vendido ao preço dos concorrentes (faixa de preço dos anúncios parecidos: mínimo, mediana, máximo).
+    Devolve {min|median|max: {price, lucro, margem_pct}} ou None sem faixa."""
+    if not band:
+        return None
+    out = {}
+    for k in ("min", "median", "max"):
+        m = calc(c, minutes, grams, band[k], channel)
+        out[k] = dict(price=band[k], lucro=m["lucro"], margem_pct=m["margem_pct"])
+    return out
 
 
 def simulate(c, items, channel="ml", fixed_month=0.0):
@@ -53,7 +66,7 @@ def simulate(c, items, channel="ml", fixed_month=0.0):
     for it in items:
         m = calc(c, it["minutes"], it["grams"], it["price"], channel)
         u = it["units"]
-        rows.append(dict(id=it["id"], price=it["price"], units=u, custo_peca=m["custo_total"], taxas_peca=m["taxas"], lucro_peca=m["lucro"], margem_pct=m["margem_pct"],
+        rows.append(dict(id=it["id"], price=it["price"], units=u, custo_peca=m["custo_total"], taxas_peca=round(m["taxas"] + m["imposto"], 2), lucro_peca=m["lucro"], margem_pct=m["margem_pct"],
                          receita_mes=round(it["price"] * u, 2), lucro_mes=round(m["lucro"] * u, 2), horas_mes=round(it["minutes"] / 60 * u, 1), gramas_mes=round(it["grams"] * u, 1)))
     lucro_bruto = sum(r["lucro_mes"] for r in rows)
     units = sum(r["units"] for r in rows)

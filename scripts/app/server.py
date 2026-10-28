@@ -917,7 +917,10 @@ def candidates():
                                       steps=steps))
             mesh = get_setting(f"mesh:{l['id']}", {}) or {}
             spd = selecao.sales_per_day(last["sold"], l["created"])
-            rows[-1].update(tese=get_setting(f"tese:{l['id']}"), filtros=selecao.evaluate(l["title"], F, mesh.get("stats"), sl["minutes"] if sl else None, mesh.get("support")) | dict(mesh_msg=mesh.get("msg", ""), mesh_status=mesh.get("status", ""),
+            comp = None
+            if sl and l["status"] == "approved":  # margem ao preço dos concorrentes: só para quem já tem tempo e peso
+                comp = {ch: custos.at_competitor(cc, sl["minutes"], sl["grams"], selecao.price_band(selecao.similar_rows(rows[-1], rows), l["id"]), ch) for ch in ("ml", "shopee")}
+            rows[-1].update(margem_concorrente=comp, tese=get_setting(f"tese:{l['id']}"), filtros=selecao.evaluate(l["title"], F, mesh.get("stats"), sl["minutes"] if sl else None, mesh.get("support")) | dict(mesh_msg=mesh.get("msg", ""), mesh_status=mesh.get("status", ""),
                             stats=mesh.get("stats")), per_day=spd, age_days=selecao.age_days(l["created"]), champion=selecao.is_champion(spd, F))
         return sorted(rows, key=lambda r: (r["filtros"]["status"] == "reprovado", -r["score"]))  # reprovados nos filtros vão para o fim
 
