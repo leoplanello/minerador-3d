@@ -135,3 +135,33 @@ def test_tese_proposta_guarda_dor_similares_e_faixa_dos_parecidos(tmp_path, monk
     (tmp_path / "img" / "1.img").unlink()
     server.propose_tese(1)
     assert "sem a foto" in server.get_setting("tese:1")["msg"]
+
+
+def test_funil_familias_e_desempenho(tmp_path, monkeypatch):
+    banco(tmp_path, monkeypatch)
+    ov = server.selecao_overview()
+    assert [f["members"] for f in ov["families"]] == [[1, 3]] and list(ov["limites"]["abrir"]) == [5, 10]
+    assert {c["id"] for c in ov["candidatos"]} == {1, 2, 3}
+    srv = server.make_server(0)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{srv.server_port}"
+    try:
+        def post(p, d):
+            try:
+                return json.load(urllib.request.urlopen(urllib.request.Request(base + p, json.dumps(d).encode()), timeout=10))
+            except urllib.error.HTTPError as e:
+                return json.load(e) | {"http": e.code}
+        r = post("/api/funil", dict(lista=[1, 2, 3], escolhidos=[1, 3]))
+        assert r["ok"] and len(r["avisos"]) == 2
+        assert post("/api/funil", dict(lista=[1, 99]))["http"] == 400
+        assert post("/api/funil/leitura", dict(id=1))["http"] == 400  # sem publicação no ML e sem número informado
+        assert post("/api/funil/leitura", dict(id=1, sold=0, price=30))["ok"]
+        pts = server.get_setting("perf:1")
+        pts[0]["ts"] = "2026-10-01T10:00:00"
+        server.put_setting("perf:1", pts)
+        assert post("/api/funil/leitura", dict(id=1, sold=12, price=30))["ok"]
+        linha = {r["id"]: r for r in server.selecao_overview()["linhas"]}[1]
+        assert linha["escolhido"] and linha["desempenho"]["suggestion"] in ("mantem", "sai") and linha["desempenho"]["days"] >= 14 and linha["leituras"][-1]["sold"] == 12
+        assert {r["id"] for r in server.selecao_overview()["linhas"]} == {1, 2, 3}
+    finally:
+        srv.shutdown()

@@ -433,7 +433,7 @@ const VIEWS = {
     },
   },
 };
-Object.assign(VIEWS, VIEWS_EXTRA);  // Resumo e Ajuda vêm de resumo.js
+Object.assign(VIEWS, VIEWS_EXTRA, VIEWS_SEL);  // Resumo e Ajuda vêm de resumo.js
 let pendingStore = '', armed = {id: 0, until: 0};
 const date = ts => ts ? String(ts).slice(0, 10).split('-').reverse().join('/') : '—';
 const storeName = s => s.name || shortUrl(s.url).slice(0, 40);

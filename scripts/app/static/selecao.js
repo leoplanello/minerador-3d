@@ -102,3 +102,46 @@ const SEL = {
       toast(r.error || 'Tese salva'); if (!r.error) { delete this.sig[c.id]; load(); } };
   },
 };
+
+// ---------- tela Seleção: funil de abrir e fechar + famílias ----------
+const SEL_STATE = {data: null};
+const VIEWS_SEL = {
+  selecao: {
+    mount: () => `<div class="card"><div class="card-h"><h2>Funil: abrir e fechar</h2><span id="fnavisos" class="small mut"></span></div>
+        <p class="small mut" style="margin-top:0">Abra de 5 a 10 candidatos sem julgar na hora, escolha de 3 a 5 para imprimir uma amostra, publique e depois feche o funil ficando só com os que vendem e dão margem.</p>
+        <div id="fnlista"></div><div class="row" style="margin-top:8px"><select id="fnadd" class="grow" aria-label="Adicionar candidato"></select><button id="fnaddb" class="sm">Abrir candidato</button></div></div>
+      <div class="card"><div class="card-h"><h2>Famílias de produtos</h2><span class="small mut">mesma dor, peso parecido</span></div><div id="fnfam"></div></div>`,
+    bind: () => {
+      const save = async d => { const r = await post('/api/funil', d); if (r.error) toast(r.error); else if (r.avisos.length) $('fnavisos').textContent = r.avisos.join(' · '); await VIEWS_SEL.selecao.update(true); };
+      $('fnaddb').onclick = () => { const f = SEL_STATE.data.funil, id = +$('fnadd').value; if (!id) return; save({...f, lista: [...f.lista, id]}); };
+      $('fnlista').onclick = e => { const f = SEL_STATE.data.funil, b = e.target.closest('[data-fn]'); if (!b) return; const id = +b.dataset.id, a = b.dataset.fn;
+        if (a === 'rm') return save({lista: f.lista.filter(x => x !== id), escolhidos: f.escolhidos.filter(x => x !== id), decisoes: f.decisoes});
+        if (a === 'pick') return save({...f, escolhidos: f.escolhidos.includes(id) ? f.escolhidos.filter(x => x !== id) : [...f.escolhidos, id]});
+        if (a === 'keep' || a === 'out') return save({...f, decisoes: {...f.decisoes, [id]: a === 'keep' ? 'mantem' : 'sai'}});
+        if (a === 'read') { const sold = prompt('Vendas acumuladas do anúncio (deixe vazio para ler pelo Mercado Livre)'); if (sold === null) return;
+          const price = sold ? prompt('Preço atual (R$)') : null; post('/api/funil/leitura', sold ? {id, sold, price} : {id}).then(r => { toast(r.error || 'Leitura guardada'); VIEWS_SEL.selecao.update(true); }); } };
+    },
+    update: async force => {
+      if (!$('fnlista')) return;
+      if (!SEL_STATE.data || force || Date.now() - (SEL_STATE.at || 0) > 20000) { SEL_STATE.data = await (await fetch('/api/selecao')).json(); SEL_STATE.at = Date.now(); }
+      const d = SEL_STATE.data, f = d.funil, [lo, hi] = d.limites.abrir, [plo, phi] = d.limites.escolher;
+      $('fnavisos').textContent = `${f.lista.length} abertos (${lo} a ${hi}) · ${f.escolhidos.length} escolhidos (${plo} a ${phi})`;
+      $('fnlista').innerHTML = d.linhas.length ? d.linhas.map(r => { const p = r.desempenho;
+        return `<div class="item"><div class="main"><b>${esc(r.title)}</b>
+          <div class="small mut">${price(r.price)} · ranking ${r.score}${r.per_day != null ? ` · ${String(r.per_day).replace('.', ',')}/dia` : ''}${r.margem != null ? ` · margem ${String(r.margem).replace('.', ',')}%` : ''}
+            ${r.filtros === 'reprovado' ? ` · <span style="color:var(--red)">reprovado: ${esc(r.motivo)}</span>` : ''}</div>
+          ${p ? `<div class="small">Desempenho: ${num(p.sold)} vendas${p.per_day != null ? ` em ${p.days} dias (${String(p.per_day).replace('.', ',')}/dia)` : ''}. Sugestão: <b>${{mantem: 'manter', sai: 'sair', espera: 'esperar'}[p.suggestion]}</b> (${esc(p.why)}).</div>` : ''}
+          ${r.decisao ? `<span class="chip ${r.decisao === 'mantem' ? 'ok' : 'error'}">${r.decisao === 'mantem' ? 'Fica' : 'Sai'}</span>` : ''}</div>
+          <div class="actions"><button class="sm ${r.escolhido ? 'pri' : ''}" data-fn="pick" data-id="${r.id}">${r.escolhido ? 'Escolhido' : 'Escolher'}</button>
+            ${r.escolhido ? `<button class="sm ghost" data-fn="read" data-id="${r.id}">Ler vendas</button><button class="sm ghost" data-fn="keep" data-id="${r.id}">Fica</button><button class="sm ghost" data-fn="out" data-id="${r.id}">Sai</button>` : ''}
+            <button class="sm ghost" data-fn="rm" data-id="${r.id}">Tirar</button></div></div>`; }).join('') : '<div class="empty"><b>Funil vazio</b>Abra candidatos abaixo.</div>';
+      const open = new Set(f.lista);
+      $('fnadd').innerHTML = '<option value="">Escolha um produto…</option>' + d.candidatos.filter(c => !open.has(c.id)).map(c => `<option value="${c.id}">${esc(c.title.slice(0, 70))} (ranking ${c.score}${c.filtros === 'reprovado' ? ', reprovado' : ''})</option>`).join('');
+      $('fnfam').innerHTML = d.families.length ? d.families.map(g => `<div class="item"><div class="main"><b>${g.members.length} produtos${g.pain ? ': ' + esc(g.pain) : ''}</b>
+          <div class="small mut">${g.titles.map(t => esc(t.slice(0, 40))).join(' · ')}</div>
+          <div class="small">${g.grams ? `Peso ${g.grams[0]} a ${g.grams[1]} g. ` : ''}${g.price ? `Preço ${price(g.price.min)} a ${price(g.price.max)}.` : ''}</div>
+          ${g.variations.length ? `<div class="small">Variações sugeridas: ${g.variations.map(v => `<a href="https://lista.mercadolivre.com.br/${encodeURIComponent(v.busca)}" target="_blank" rel="noopener">${esc(v.nome)}</a>`).join(' · ')}</div>` : ''}</div></div>`).join('')
+        : '<div class="empty"><b>Nenhuma família ainda</b>Aparecem quando há 2 ou mais produtos parecidos com peso parecido.</div>';
+    },
+  },
+};

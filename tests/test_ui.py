@@ -276,3 +276,26 @@ def test_filtros_na_lista_na_configuracao_e_no_produto(gui):
         page.wait_for_timeout(800)
         assert server.candidates()[0]["created"] in ("2025-01-01", "") or any(r["created"] == "2025-01-01" for r in server.candidates())
         b.close()
+
+
+def test_tela_selecao_funil_e_familias(gui):
+    with playwright.sync_playwright() as p:
+        b = p.chromium.launch(channel="chrome")
+        page = b.new_page(viewport={"width": 1280, "height": 800})
+        page.goto(f"{gui}/#/selecao")
+        page.wait_for_selector("#fnadd option >> nth=1", state="attached")
+        assert "0 abertos (5 a 10)" in page.inner_text("#fnavisos") and "Funil vazio" in page.inner_text("#fnlista")
+        page.select_option("#fnadd", index=1)
+        page.click("#fnaddb")
+        page.wait_for_selector("#fnlista .item")
+        assert "1 abertos" in page.inner_text("#fnavisos") and server.get_setting("funil")["lista"]
+        page.click("[data-fn=pick]")
+        page.wait_for_selector("button:text-is(\"Escolhido\")")
+        assert server.get_setting("funil")["escolhidos"] == server.get_setting("funil")["lista"]
+        page.click("[data-fn=keep]")
+        page.wait_for_selector(".chip:has-text('Fica')")
+        assert list(server.get_setting("funil")["decisoes"].values()) == ["mantem"]
+        page.click("[data-fn=rm]")
+        page.wait_for_selector("text=Funil vazio")
+        assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
+        b.close()

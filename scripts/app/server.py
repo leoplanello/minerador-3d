@@ -830,6 +830,47 @@ def propose_tese(lid):
         put_setting(f"tese:{lid}", dict(prev, status="error", msg=str(e)[:200]))
 
 
+def selecao_overview():
+    """Tela Seleção: famílias de produtos e o funil de abrir e fechar, com o desempenho de quem já foi publicado."""
+    cands = candidates()
+    by_id = {c["id"]: c for c in cands}
+    fams = selecao.families([dict(id=c["id"], title=c["title"], status=c["status"], grams=(c["slice"] or {}).get("grams"), price=c["price"], score=c["score"], tese=c["tese"]) for c in cands])
+    funil = get_setting("funil") or dict(lista=[], escolhidos=[], decisoes={})
+    target = get_costs()["margem_alvo_pct"]
+    rows = []
+    for lid in funil["lista"]:
+        c = by_id.get(lid)
+        if not c:
+            continue
+        pub = (c["publications"] or {}).get("ml")
+        pts = get_setting(f"perf:{lid}") or []
+        margin = ((c["margin"] or {}).get("ml") or {}).get("margem_pct")
+        rows.append(dict(id=lid, title=c["title"], thumb=c["thumb"], image=c["image"], price=c["price"], score=c["score"], per_day=c["per_day"], champion=c["champion"], filtros=c["filtros"]["status"],
+                         motivo=(c["filtros"]["reasons"] or [""])[0], escolhido=lid in funil["escolhidos"], decisao=funil["decisoes"].get(str(lid), ""), status=c["status"],
+                         publicado=bool(pub and pub.get("external_id")), margem=margin, leituras=pts, desempenho=selecao.perf_summary(pts, margin, target) if pts else None))
+    return dict(families=fams, funil=funil, linhas=rows, limites=dict(abrir=selecao.FUNNEL_OPEN, escolher=selecao.FUNNEL_PICK), meta_margem=target,
+                candidatos=[dict(id=c["id"], title=c["title"], score=c["score"], filtros=c["filtros"]["status"]) for c in cands if c["status"] != "discarded"][:60])
+
+
+def read_performance(lid, sold=None, price=None):
+    """Uma leitura de desempenho de um anúncio publicado: manual (sold, price) ou, sem isso, pelo anúncio no Mercado Livre (API oficial)."""
+    c = next((c for c in candidates() if c["id"] == lid), None)
+    if not c:
+        raise ValueError("produto não encontrado")
+    if sold is None:
+        pub = (c["publications"] or {}).get("ml")
+        if not pub or not pub.get("external_id"):
+            raise ValueError("este produto não foi publicado no Mercado Livre pelo app; informe as vendas à mão")
+        item = ml.call("GET", f"/items/{pub['external_id']}")
+        sold, price = item.get("sold_quantity"), item.get("price")
+    sold = int(sold)
+    if sold < 0:
+        raise ValueError("vendas não podem ser negativas")
+    pts = get_setting(f"perf:{lid}") or []
+    pts.append(dict(ts=datetime.now().isoformat(timespec="seconds"), sold=sold, price=float(price) if price not in (None, "") else None))
+    put_setting(f"perf:{lid}", pts[-200:])
+
+
 def set_created(lid, created):
     created = str(created or "").strip()
     if created and selecao.age_days(created) is None:
@@ -1101,6 +1142,8 @@ class H(BaseHTTPRequestHandler):
             return self._json(dict(values=get_costs(), labels=custos.LABELS))
         if path == "/api/filtros":
             return self._json(dict(values=get_filters(), labels=selecao.LABELS))
+        if path == "/api/selecao":
+            return self._json(selecao_overview())
         if path == "/api/similares":
             lid = int(parse_qs(url.query).get("id", ["0"])[0])
             cands = candidates()
@@ -1304,6 +1347,19 @@ class H(BaseHTTPRequestHandler):
             try:
                 lid = int(data["id"])
                 put_setting(f"tese:{lid}", selecao.clean_thesis(data) | dict(status="ok", msg="", proposta=False))
+            except (ValueError, TypeError, KeyError) as e:
+                return self._json(dict(error=str(e)), 400)
+            return self._json(dict(ok=True))
+        if path == "/api/funil":
+            try:
+                funil, avisos = selecao.clean_funnel(data, {c["id"] for c in candidates()})
+                put_setting("funil", funil)
+            except (ValueError, TypeError, KeyError) as e:
+                return self._json(dict(error=str(e)), 400)
+            return self._json(dict(ok=True, avisos=avisos))
+        if path == "/api/funil/leitura":
+            try:
+                read_performance(int(data["id"]), data.get("sold"), data.get("price"))
             except (ValueError, TypeError, KeyError) as e:
                 return self._json(dict(error=str(e)), 400)
             return self._json(dict(ok=True))
