@@ -187,6 +187,7 @@ const VIEWS = {
     mount: () => `<div id="prod"></div>
       <div class="card" id="ovcard" hidden></div>
       <div class="card" id="selcard" hidden></div>
+      <div class="card" id="salacard" hidden></div>
       <div class="card" id="tlcard" hidden><div class="card-h"><h2>Linha do tempo</h2><span class="small mut">cada etapa, quando rodou e quanto levou</span></div><div id="tline"></div></div>
       <div class="card" id="mcard" hidden><div class="card-h"><h2>Modelo 3D</h2><span id="mchip" class="chip"></span></div>
         <p id="mstate" class="small mut" style="margin:0 0 12px"></p>
@@ -349,6 +350,7 @@ const VIEWS = {
       if (!c) return;
       $('ovcard').hidden = false; $('ovcard').innerHTML = overview(c);
       SEL.render(c);
+      SALA.show(c);
       $('tlcard').hidden = false;
       const msgs = {slice: c.slice_msg, copy: c.copy_msg, images: c.images_msg, video: c.video_msg, shopee: ''};
       $('tline').innerHTML = `<ol class="tl">${S.steps.map(n => { const st = c.steps[n] || 'pending', t = (c.step_times || {})[n] || {}, own = c.publications[n];

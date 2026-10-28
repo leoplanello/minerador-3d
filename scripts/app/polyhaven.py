@@ -23,6 +23,15 @@ ROOMS = {
     "escritorio": dict(label="Escritório", wall=("beige_wall_001", 2200, (1.0, 0.96, 0.88)), floor=("wooden_floor_02", 1200, None), hdri=("small_empty_room_3", 120, 1.6),
                        support=("wooden_table_02", 0, -360, 0), items=[("alarm_clock_01", -430, 15), ("potted_plant_04", 440, 0)],
                        extras=[("dining_chair_02", 650, -820, 165)], door_x=-1250),
+    "quarto": dict(label="Quarto", wall=("painted_plaster_wall", 2400, (0.84, 0.89, 0.95)), floor=("laminate_floor_02", 1700, None), hdri=("hotel_room", 160, 1.5),
+                   support=("painted_wooden_nightstand", 0, -300, 0), items=[("alarm_clock_01", -150, 20), ("potted_plant_04", 170, 0)],
+                   extras=[("vintage_day_bed", 1500, -500, 0)], door_x=-1900),
+    "cozinha": dict(label="Cozinha", wall=("floor_tiles_02", 650, (1.0, 0.98, 0.94)), floor=("wooden_floor_02", 1200, None), hdri=("small_empty_room_4", 80, 1.6),
+                    support=("wooden_table_02", 0, -360, 0), items=[("vintage_electric_kettle", 360, 160), ("wooden_bowl_01", -350, 0)],
+                    extras=[("wooden_stool_01", 700, -900, 20)], door_x=-1900),
+    "oficina": dict(label="Bancada de oficina", wall=("concrete_wall_003", 2000, None), floor=("concrete_floor_painted", 1500, None), hdri=("small_workshop", 40, 1.4),
+                    support=("WoodenTable_03", 0, -300, 0), items=[("metal_toolbox", -430, 0), ("adjustable_wrench", 400, 70)],
+                    extras=[("metal_stool_02", 800, -800, 0)], door_x=2100),
 }
 
 

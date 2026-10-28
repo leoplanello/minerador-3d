@@ -2,6 +2,7 @@ import json
 import struct
 import sys
 import threading
+import time
 import urllib.request
 from pathlib import Path
 
@@ -163,5 +164,55 @@ def test_funil_familias_e_desempenho(tmp_path, monkeypatch):
         linha = {r["id"]: r for r in server.selecao_overview()["linhas"]}[1]
         assert linha["escolhido"] and linha["desempenho"]["suggestion"] in ("mantem", "sai") and linha["desempenho"]["days"] >= 14 and linha["leituras"][-1]["sold"] == 12
         assert {r["id"] for r in server.selecao_overview()["linhas"]} == {1, 2, 3}
+    finally:
+        srv.shutdown()
+
+
+def test_api_da_sala_virtual(tmp_path, monkeypatch):
+    banco(tmp_path, monkeypatch)
+    stl(tmp_path / "products/1/model/m.stl", 40, 30, 20)
+    with server.db() as c:
+        c.execute("INSERT INTO models(listing_id,file_path) VALUES(1,'products/1/model/m.stl')")
+    vistos = []
+
+    def falso(model, outdir, cena, preview=False, title=""):
+        vistos.append((Path(model).name, cena["ambiente"], cena["colocacao"], preview))
+        outdir.mkdir(parents=True, exist_ok=True)
+        (outdir / "render_1.jpg").write_bytes(b"\xff\xd8jpg")
+        return outdir / "render_1.jpg"
+    monkeypatch.setattr(server.renderizar, "render_cena", falso)
+    monkeypatch.setattr(server.polyhaven, "ensure", lambda: {})
+    srv = server.make_server(0)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    b = f"http://127.0.0.1:{srv.server_port}"
+    try:
+        def post(p, d, raw=None):
+            try:
+                return json.load(urllib.request.urlopen(urllib.request.Request(b + p, raw if raw is not None else json.dumps(d).encode()), timeout=20))
+            except urllib.error.HTTPError as e:
+                return json.load(e) | {"http": e.code}
+        d = json.load(urllib.request.urlopen(b + "/api/cena?id=1", timeout=10))
+        assert d["cena"]["ambiente"] == "sala" and "quarto" in d["ambientes"] and d["previa"] is False and d["modelo_enviado"] is None
+        r = post("/api/cena/previa", dict(id=1, cena=dict(ambiente="cozinha", colocacao="prateleira")))
+        assert r["ok"] and r["url"].startswith("/products/1/cena/previa.jpg") and vistos[-1] == ("m.stl", "cozinha", "prateleira", True)
+        assert urllib.request.urlopen(b + "/products/1/cena/previa.jpg", timeout=10).read().startswith(b"\xff\xd8")
+        assert json.load(urllib.request.urlopen(b + "/api/cena?id=1", timeout=10))["cena"]["ambiente"] == "cozinha"  # lembra a última escolha
+        assert post("/api/cena/previa", dict(id=1, cena=dict(ambiente="praia")))["http"] == 400
+        assert post("/api/cena/previa", dict(id=99, cena={}))["http"] == 400
+        # modelo enviado só para a cena: não troca o do produto
+        up = post("/api/cena/modelo?id=1&name=../../meu%20vaso.stl", None, raw=b"\0" * 80 + struct.pack("<I", 0))
+        assert up["ok"] and up["arquivo"] == "modelo.stl" and (tmp_path / "products/1/cena/modelo.stl").is_file()
+        assert post("/api/cena/modelo?id=1&name=x.exe", None, raw=b"abc")["http"] == 400
+        post("/api/cena/previa", dict(id=1, cena=dict(modelo="enviado")))
+        assert vistos[-1][0] == "modelo.stl"
+        assert server.get_setting("cena:1")["modelo"] == "enviado"
+        r = post("/api/cena/render", dict(id=1, cena=dict(ambiente="sala", colocacao="mesa")))
+        assert r["ok"]
+        for _ in range(100):
+            if server.CENA_JOBS[1]["status"] != "running":
+                break
+            time.sleep(0.05)
+        assert server.CENA_JOBS[1]["status"] == "ok" and (tmp_path / "products/1/renders/cena_1.jpg").is_file() and vistos[-1][3] is False
+        assert "cena_1.jpg" in [m["name"] for m in server.media_files(1)]  # a imagem entra na galeria do produto
     finally:
         srv.shutdown()

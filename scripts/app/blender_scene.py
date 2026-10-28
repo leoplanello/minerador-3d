@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 import bpy
-from mathutils import Matrix, Vector
+from mathutils import Matrix, Quaternion, Vector
 
 model, outdir, cfgfile, engine = sys.argv[sys.argv.index("--") + 1:][:4]
 cfg = json.load(open(cfgfile, encoding="utf-8"))
@@ -324,6 +324,62 @@ def trim(door_x):
     ctx.append(prim("cylinder", (door_x + 360, -52, 1000), (1, 1, 1), solid("macaneta", (0.7, 0.7, 0.72), 0.25, 1.0), rot=(math.radians(90), 0, 0), name="macaneta", radius=13, depth=44))
 
 
+# luz do dia: (força do HDRI, cor da janela, altura da janela, fator da janela)
+LUZ = {"dia": (1.0, (1.0, 0.82, 0.62), 1700, 1.0), "tarde": (0.65, (1.0, 0.52, 0.26), 750, 0.5), "noite": (0.03, (0.45, 0.58, 1.0), 1700, 0.06)}[(cfg.get("cena") or {}).get("luz", "dia")]
+
+
+def reference_object(kind, x, base_z, y):
+    """Objeto de referência de tamanho conhecido, ao lado da peça, para a escala ficar óbvia. Medidas reais em mm."""
+    if kind == "moeda":
+        return [prim("cylinder", (x + 13.5, y, base_z + 1), (1, 1, 1), solid("moeda", (0.72, 0.58, 0.28), 0.3, 1.0), name="moeda", radius=13.5, depth=2)]
+    if kind == "caneca":
+        ceramica = solid("caneca", (0.9, 0.9, 0.88), 0.25)
+        return [prim("cylinder", (x + 40, y, base_z + 47.5), (1, 1, 1), ceramica, name="caneca", radius=40, depth=95),
+                prim("torus", (x + 82, y, base_z + 47), (1, 1, 1), ceramica, rot=(math.radians(90), 0, 0), name="caneca", major_radius=20, minor_radius=5)]
+    if kind == "celular":
+        tela = prim("cube", (x + 36, y, base_z + 4), (36, 74, 4), solid("celular", (0.02, 0.02, 0.025), 0.2), name="celular", size=2)
+        tela.modifiers.new("chanfro", "BEVEL").width = 5
+        return [tela]
+    return []
+
+
+def place_custom(C, sup_top, sy):
+    """Sala virtual: coloca a peça (do produto ou enviada) onde a pessoa escolheu, na escala e no giro pedidos. Devolve (peça, objetos de referência)."""
+    k = C["escala_pct"] / 100
+    obj_ctx.scale = (k, k, k)
+    mode, giro = C["colocacao"], math.radians(C["giro"])
+    if mode == "parede":
+        up = up_direction(obj, back_ax)
+        obj_ctx.rotation_mode = "QUATERNION"
+        obj_ctx.rotation_quaternion = Quaternion((0, 1, 0), giro) @ Matrix((back.cross(up), back, up)).to_quaternion()
+        obj_ctx.location = (0, 0, 0)
+        bpy.context.view_layer.update()
+        clo, chi = bounds(obj_ctx)
+        obj_ctx.location = Vector((-(clo.x + chi.x) / 2, -chi.y, max(1250, sup_top + 560) - (clo.z + chi.z) / 2))
+        bpy.context.view_layer.update()
+        return [], []
+    obj_ctx.rotation_mode = "XYZ"
+    obj_ctx.rotation_euler = (0, 0, giro)  # como sai da impressora, só girada em volta do eixo vertical
+    obj_ctx.location = (0, 0, 0)
+    bpy.context.view_layer.update()
+    lo_, hi_ = bounds(obj_ctx)
+    extra = []
+    if mode == "mesa":
+        x, y, z = 0, sy, sup_top
+    elif mode == "prateleira":  # tábua flutuante na parede, a 1,3 m do piso
+        board = prim("cube", (0, -120, 1288), (460, 120, 12), solid("tabua", (0.55, 0.38, 0.22), 0.5), name="tabua", size=2)
+        board.modifiers.new("chanfro", "BEVEL").width = 4
+        extra.append(board)
+        x, y, z = 0, -120, 1300
+    else:  # chão
+        x, y, z = 0, -750, 0
+    obj_ctx.location = Vector((x - (lo_.x + hi_.x) / 2, y - (lo_.y + hi_.y) / 2, z - lo_.z))
+    bpy.context.view_layer.update()
+    lo_, hi_ = bounds(obj_ctx)
+    refs = reference_object(C["referencia"], hi_.x + 40, z, y)
+    return extra, refs
+
+
 def room_scene():
     """Ambiente com materiais PBR do Poly Haven (parede, piso), móvel de apoio com objetos, rodapé, porta, HDRI de interior e luz de janela.
     Devolve o ponto que a câmera mira. A peça fica fixada na parede acima do móvel ou, para aparelhos, em pé sobre ele."""
@@ -343,16 +399,26 @@ def room_scene():
     for asset, x, y, rot in S["extras"]:
         o, _ = furniture(asset, x, y, rot)
         ctx.extend(o)
-    up = up_direction(obj, back_ax)
-    rotq = Matrix((back.cross(up), back, up)).to_quaternion()
-    obj_ctx.rotation_mode = "QUATERNION"
-    obj_ctx.rotation_quaternion = rotq
-    obj_ctx.location = (0, 0, 0)
-    bpy.context.view_layer.update()
-    clo, chi = bounds(obj_ctx)
-    stand = cfg.get("montagem") == "sobre_movel"
-    legs = [obj_ctx]
-    if stand:  # aparelho em pé sobre o móvel, com a peça de cada lado (o par: a peça e a sua imagem espelhada)
+    C = cfg.get("cena")
+    if C:
+        extra, refs = place_custom(C, sup_top, sy)
+        ctx.extend(extra + refs)  # a tábua da prateleira só decora: o enquadramento mede a peça e o objeto de referência
+        legs, props = [obj_ctx], refs
+        clo, chi = bounds(obj_ctx)
+        stand = False
+    else:
+        up = up_direction(obj, back_ax)
+        rotq = Matrix((back.cross(up), back, up)).to_quaternion()
+        obj_ctx.rotation_mode = "QUATERNION"
+        obj_ctx.rotation_quaternion = rotq
+        obj_ctx.location = (0, 0, 0)
+        bpy.context.view_layer.update()
+        clo, chi = bounds(obj_ctx)
+        stand = cfg.get("montagem") == "sobre_movel"
+        legs = [obj_ctx]
+    if C:
+        pass
+    elif stand:  # aparelho em pé sobre o móvel, com a peça de cada lado (o par: a peça e a sua imagem espelhada)
         mw = 190
         lx = chi.x - clo.x
         obj_ctx.location = Vector((-(mw / 2 + 3 + lx / 2) - (clo.x + chi.x) / 2, -chi.y, sup_top - clo.z))
@@ -372,8 +438,10 @@ def room_scene():
     for o in legs[1:]:
         a, b = bounds(o)
         plo, phi = Vector(min(x, y) for x, y in zip(plo, a)), Vector(max(x, y) for x, y in zip(phi, b))
-    props = []
-    if cfg.get("objeto") == "modem":
+    props = props if C else []
+    if C:
+        pass
+    elif cfg.get("objeto") == "modem":
         props = make_modem(0, sup_top)
     elif cfg.get("objeto"):
         props = make_prop(cfg["objeto"], plo, phi, top_face(obj_ctx))
@@ -386,7 +454,7 @@ def room_scene():
     env, bgn, out, tc, mp = (nt.nodes.new(t) for t in ("ShaderNodeTexEnvironment", "ShaderNodeBackground", "ShaderNodeOutputWorld", "ShaderNodeTexCoord", "ShaderNodeMapping"))
     env.image = bpy.data.images.load(str(next((PH / hn).glob("*.hdr"))))
     mp.inputs["Rotation"].default_value[2] = math.radians(hrot)
-    bgn.inputs["Strength"].default_value = hstr
+    bgn.inputs["Strength"].default_value = hstr * LUZ[0]
     nt.links.new(tc.outputs["Generated"], mp.inputs["Vector"])
     nt.links.new(mp.outputs[0], env.inputs["Vector"])
     nt.links.new(env.outputs["Color"], bgn.inputs["Color"])
@@ -426,14 +494,19 @@ else:
 
 # luz: na sala, uma janela de área suave e quente (do lado esquerdo da câmera) mais um preenchimento fraco; no cenário simples, sol com caixilho de sombra
 if PH:
-    k = {"soft": 0.6, "normal": 1.0, "strong": 1.5}[cfg["light"]]
-    for loc, size_xy, watts, col in (((-2400, -1500, 1700), (1500, 1900), 5200 * k, (1.0, 0.82, 0.62)), ((2200, -2600, 900), (2400, 1400), 480 * k, (0.85, 0.9, 1.0))):
+    k = {"soft": 0.6, "normal": 1.0, "strong": 1.5}[cfg["light"]] * LUZ[3]
+    for loc, size_xy, watts, col in (((-2400, -1500, LUZ[2]), (1500, 1900), 5200 * k, LUZ[1]), ((2200, -2600, 900), (2400, 1400), 480 * k * (0.25 if LUZ[3] < 1 else 1), (0.85, 0.9, 1.0))):
         bpy.ops.object.light_add(type="AREA", location=loc)
         lt = bpy.context.object
         lt.data.shape, lt.data.size, lt.data.size_y = "RECTANGLE", size_xy[0], size_xy[1]
         lt.data.energy, lt.data.color = watts * 1000, col
         aim(lt, target)
         ctx.append(lt)
+    if (cfg.get("cena") or {}).get("luz") == "noite":  # à noite a luz vem de um abajur ao lado da peça
+        bpy.ops.object.light_add(type="POINT", location=target + Vector((-650, -750, 650)))
+        lamp = bpy.context.object
+        lamp.data.energy, lamp.data.color, lamp.data.shadow_soft_size = 3.2e5, (1.0, 0.72, 0.45), 60
+        ctx.append(lamp)
 else:
     sun_dir = Vector((-0.55, 0.65, -0.55)) if ctx_kind == "parede" else Vector((-0.5, 0.35, -0.8))
     sun_dir.normalize()
@@ -485,7 +558,7 @@ cam.data.lens = 50
 cam.data.clip_start, cam.data.clip_end = 1, 100000  # a cena é em mm: o padrão (100) cortaria a sala
 for i, (name, az, el, zoom, *rest) in enumerate(cfg["views"], 1):
     t = rest[0] if rest else None  # vídeo: 0 = câmera aberta, 1 = de perto; a posição é contínua entre os quadros
-    in_use = name.startswith("uso")
+    in_use = name.startswith(("uso", "cena"))
     for o in studio:
         o.hide_render = in_use
     obj.hide_render = in_use
@@ -501,15 +574,16 @@ for i, (name, az, el, zoom, *rest) in enumerate(cfg["views"], 1):
         scene.cycles.denoiser = "OPENIMAGEDENOISE"
     elif engine != "CYCLES":
         scene.render.engine = "BLENDER_EEVEE_NEXT"
-    focus = (FOCUS if cfg.get("montagem") == "sobre_movel" else target) if (in_use and PH) else target if in_use else center
+    focus = (FOCUS if (cfg.get("montagem") == "sobre_movel" or cfg.get("cena")) else target) if (in_use and PH) else target if in_use else center
     a, e = math.radians(az + (-90 if in_use else cfg["turn"])), math.radians(el)
     if PH and in_use:
         # a peça ocupa uma fração da altura do quadro (perto 40 %, uso 30 %, médio 20 %, aberto 8 %); a distância sai da lente: d = tamanho * lente / (sensor * fração)
-        frac, fst, lens = {"uso": (0.30, 2.5, 50), "uso_perto": (0.40, 1.8, 50), "uso_medio": (0.20, 3.2, 50), "uso_aberto": (0.08, 5.0, 28)}[name]
+        frac, fst, lens = {"uso": (0.30, 2.5, 50), "uso_perto": (0.40, 1.8, 50), "uso_medio": (0.20, 3.2, 50), "uso_aberto": (0.08, 5.0, 28),
+                           "cena": (0.35, 2.8, 50), "cena_frontal": (0.35, 2.8, 50), "cena_close": (0.70, 2.0, 60), "cena_orbital": (0.32, 2.8, 50)}[name]
         stand = cfg.get("montagem") == "sobre_movel"
-        if t is not None:  # vídeo: da cena até a peça (que fica com 45 % da altura no fim), a lente fecha junto
+        if t is not None and name != "cena_orbital":  # vídeo: da cena até a peça (que fica com 45 % da altura no fim), a lente fecha junto
             frac, fst, lens = (0.07 if stand else 0.14) + (0.38 if stand else 0.24) * t, 4.0 - 2.2 * t, 35 + 15 * t
-        span = leg_span if (stand and (t is not None or name == "uso_perto")) else framed_span if name == "uso" or t is not None else part_span  # com o objeto na cena, o enquadramento inclui o objeto
+        span = leg_span if (stand and (t is not None or name == "uso_perto")) else framed_span if name in ("uso", "cena", "cena_frontal", "cena_orbital") or t is not None else part_span  # com o objeto na cena, o enquadramento inclui o objeto
         dist = span * lens / (36 * frac)
         if t is None:  # peça pequena: o médio e o aberto ainda mostram o ambiente (a peça fica menor que a fração pedida)
             dist = max(dist, {"uso_medio": 900, "uso_aberto": 2700}.get(name, 0))

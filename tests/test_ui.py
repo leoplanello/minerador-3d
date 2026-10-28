@@ -348,3 +348,24 @@ def test_perfis_do_chrome_na_configuracao(gui, tmp_path, monkeypatch):
         assert abertos and abertos[0][-1] == "https://www.mercadolivre.com.br/login" and (tmp_path / "perfis-app" / "Minerador 3D - Pessoal").is_dir()
         assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
         b.close()
+
+
+def test_sala_virtual_na_tela_do_produto(gui):
+    with playwright.sync_playwright() as p:
+        b = p.chromium.launch(channel="chrome")
+        page = b.new_page(viewport={"width": 1280, "height": 800})
+        page.goto(f"{gui}/#/producao/1")  # produto novo: sem sala virtual
+        page.wait_for_selector("#selcard:not([hidden])")
+        assert page.is_hidden("#salacard")
+        page.goto(f"{gui}/#/producao/2")
+        page.wait_for_selector("#slprev")
+        txt = page.inner_text("#salacard")
+        assert "Sala virtual" in txt and "Pré-visualizar" in txt and "Gerar vídeo orbital" in txt
+        assert page.locator("#sl_ambiente option").count() == 6 and page.locator("#sl_colocacao option").count() == 4
+        page.select_option("#sl_luz", "noite")
+        page.fill("#sl_escala", "250")
+        assert "250%" in page.inner_text("#sl_escv")
+        page.check("#slcyc")
+        assert "Cycles" in page.inner_text("#slest")
+        assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
+        b.close()

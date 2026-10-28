@@ -136,3 +136,29 @@ def test_acabamento_das_fotos_em_uso_escurece_a_borda(tmp_path):
     centro = sum(im.crop((190, 190, 210, 210)).getdata()) / 400
     borda = sum(im.crop((0, 0, 20, 20)).getdata()) / 400
     assert borda < centro - 15 and abs(centro - 200) < 20  # vinheta: canto mais escuro, centro quase igual
+
+
+def test_sala_virtual_valida_os_controles():
+    c = render.clean_cena({})
+    assert c == render.CENA_DEFAULT | dict(escala_pct=100.0)
+    c = render.clean_cena(dict(ambiente="oficina", colocacao="prateleira", escala_pct="150", giro="90", camera="orbital", luz="noite", referencia="caneca", lixo="x"))
+    assert c["ambiente"] == "oficina" and c["escala_pct"] == 150.0 and c["giro"] == 90 and "lixo" not in c
+    assert set(render.CENA_CHOICES["ambiente"]) >= {"sala", "entrada", "escritorio", "quarto", "cozinha", "oficina"}
+    for ruim in (dict(ambiente="praia"), dict(colocacao="teto"), dict(escala_pct=5), dict(escala_pct=900), dict(giro=360), dict(giro="x"), dict(luz="alvorada"), dict(camera="drone"), dict(referencia="carro")):
+        with pytest.raises(ValueError):
+            render.clean_cena(ruim)
+    az = [a for a, _, _ in render.orbit_path(21)]
+    assert az[0] == -70 and az[-1] == 70 and az == sorted(az) and az[1] - az[0] < az[11] - az[10]  # meia volta, devagar no começo
+    assert render.cena_cfg(c)["sala"] is render.polyhaven.ROOMS["oficina"] and render.cena_cfg(c)["objeto"] == ""
+
+
+@pytest.mark.skipif(not render.BLENDER.exists() or not render.polyhaven.available(), reason="Blender portátil ou ativos do Poly Haven ausentes")
+@pytest.mark.parametrize("colocacao", ["chao", "mesa", "parede", "prateleira"])
+def test_sala_virtual_previa_real_em_cada_colocacao(tmp_path, colocacao):
+    from PIL import Image
+    make3mf(tmp_path / "c.3mf")
+    f = render.render_cena(tmp_path / "c.3mf", tmp_path / "o", dict(ambiente="quarto", colocacao=colocacao, referencia="moeda", luz="tarde"), preview=True)
+    im = Image.open(f)
+    assert im.size == (640, 640)
+    px = [im.getpixel((x, y)) for x in range(0, 640, 64) for y in range(0, 640, 64)]
+    assert min(max(p) for p in px) < 250 and max(max(p) for p in px) > 40  # é uma cena com cor e luz, não fundo branco nem preto
