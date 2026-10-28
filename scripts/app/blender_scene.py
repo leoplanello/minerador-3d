@@ -243,7 +243,7 @@ def hero_objs():
 
 
 def modem_material():
-    m, b = make_mat("modem", 0.42, Base_Color=(0.022, 0.022, 0.026, 1))
+    m, b = make_mat("modem", 0.42, Base_Color=(0.30, 0.31, 0.33, 1))  # cinza médio: a peça preta do suporte é que chama o olho
     nt = m.node_tree
     tc, chk, bm = nt.nodes.new("ShaderNodeTexCoord"), nt.nodes.new("ShaderNodeTexChecker"), nt.nodes.new("ShaderNodeBump")
     chk.inputs["Scale"].default_value = 0.28  # grade de ventilação: um quadrado a cada ~3,5 mm
@@ -254,7 +254,7 @@ def modem_material():
     return m
 
 
-def make_modem(cx, bottom, w=190, d=46, h=235):
+def make_modem(cx, bottom, w=190, d=42, h=205):
     """Aparelho de fibra em pé (bloco preto com grade de ventilação e LED), encostado na parede em y = 0. Medidas de um modem comum (o Poly Haven não tem roteador)."""
     out = [prim("cube", (cx, -d / 2 - 1, bottom + h / 2), (w / 2, d / 2, h / 2), modem_material(), name="modem", size=2)]
     out[-1].modifiers.new("chanfro", "BEVEL").width = 3.5
@@ -315,8 +315,13 @@ def trim(door_x):
     for dx in (-490, 490):
         ctx.append(prim("cube", (door_x + dx, -12, 1060), (38, 12, 1060), white, name="batente", size=2))
     ctx.append(prim("cube", (door_x, -12, 2135), (528, 12, 38), white, name="batente", size=2))
-    ctx.append(prim("cube", (door_x, -4, 1040), (452, 4, 1040), leaf, name="folha", size=2))
-    ctx.append(prim("cylinder", (door_x + 380, -22, 1000), (1, 1, 1), solid("macaneta", (0.7, 0.7, 0.72), 0.25, 1.0), rot=(math.radians(90), 0, 0), name="macaneta", radius=14, depth=60))
+    ctx.append(prim("cube", (door_x, -1, 1040), (452, 1, 1040), solid("vao-escuro", (0.03, 0.03, 0.03), 0.9), name="vao", size=2))  # a fresta entre a folha e o batente fica escura
+    ctx.append(prim("cube", (door_x, -14, 1030), (436, 14, 1030), leaf, name="folha", size=2))
+    for dx in (-215, 215):  # almofadas: duas em cima e duas embaixo, como numa porta de madeira pintada
+        for z, h in ((1560, 330), (560, 400)):
+            ctx.append(prim("cube", (door_x + dx, -29, z), (170, 3, h), white, name="almofada", size=2))
+    ctx.append(prim("cube", (door_x + 360, -31, 1000), (22, 3, 60), solid("macaneta", (0.7, 0.7, 0.72), 0.25, 1.0), name="macaneta", size=2))  # espelho da maçaneta
+    ctx.append(prim("cylinder", (door_x + 360, -52, 1000), (1, 1, 1), solid("macaneta", (0.7, 0.7, 0.72), 0.25, 1.0), rot=(math.radians(90), 0, 0), name="macaneta", radius=13, depth=44))
 
 
 def room_scene():
@@ -455,7 +460,10 @@ if PH:
         pts = [o.matrix_world @ Vector(c) for o in objs if o.type == "MESH" for c in o.bound_box]
         return max(max(p[k] for p in pts) - min(p[k] for p in pts) for k in range(3))
     part_span = span_of(HERO[:2] if cfg.get("montagem") == "sobre_movel" else HERO[:1])
+    leg_span = span_of(HERO[:1])  # a peça sozinha: no vídeo e no detalhe ela é a medida do quadro, nunca o aparelho
     framed_span = span_of(HERO)
+    _p = [HERO[0].matrix_world @ Vector(c) for c in HERO[0].bound_box]
+    FOCUS = (Vector((min(q[k] for q in _p) for k in range(3))) + Vector((max(q[k] for q in _p) for k in range(3)))) / 2
 scene = bpy.context.scene
 scene.render.engine = "CYCLES" if engine == "CYCLES" else "BLENDER_EEVEE_NEXT"
 if engine == "CYCLES":
@@ -493,14 +501,15 @@ for i, (name, az, el, zoom, *rest) in enumerate(cfg["views"], 1):
         scene.cycles.denoiser = "OPENIMAGEDENOISE"
     elif engine != "CYCLES":
         scene.render.engine = "BLENDER_EEVEE_NEXT"
-    focus = target if in_use else center
+    focus = (FOCUS if cfg.get("montagem") == "sobre_movel" else target) if (in_use and PH) else target if in_use else center
     a, e = math.radians(az + (-90 if in_use else cfg["turn"])), math.radians(el)
     if PH and in_use:
         # a peça ocupa uma fração da altura do quadro (perto 40 %, uso 30 %, médio 20 %, aberto 8 %); a distância sai da lente: d = tamanho * lente / (sensor * fração)
         frac, fst, lens = {"uso": (0.30, 2.5, 50), "uso_perto": (0.40, 1.8, 50), "uso_medio": (0.20, 3.2, 50), "uso_aberto": (0.08, 5.0, 28)}[name]
-        if t is not None:  # vídeo: da cena (14 %) até a peça (38 %), a lente fecha junto
-            frac, fst, lens = 0.14 + 0.24 * t, 4.0 - 2.2 * t, 35 + 15 * t
-        span = framed_span if name == "uso" or t is not None else part_span  # com o objeto na cena, o enquadramento inclui o objeto
+        stand = cfg.get("montagem") == "sobre_movel"
+        if t is not None:  # vídeo: da cena até a peça (que fica com 45 % da altura no fim), a lente fecha junto
+            frac, fst, lens = (0.07 if stand else 0.14) + (0.38 if stand else 0.24) * t, 4.0 - 2.2 * t, 35 + 15 * t
+        span = leg_span if (stand and (t is not None or name == "uso_perto")) else framed_span if name == "uso" or t is not None else part_span  # com o objeto na cena, o enquadramento inclui o objeto
         dist = span * lens / (36 * frac)
         if t is None:  # peça pequena: o médio e o aberto ainda mostram o ambiente (a peça fica menor que a fração pedida)
             dist = max(dist, {"uso_medio": 900, "uso_aberto": 2700}.get(name, 0))
@@ -515,6 +524,11 @@ for i, (name, az, el, zoom, *rest) in enumerate(cfg["views"], 1):
         up_ = cam.matrix_world.to_quaternion() @ Vector((0, 1, 0))
         frame_h = dist * 36 / cam.data.lens
         aim(cam, focus + right * frame_h / 6 - up_ * frame_h / 14)
+        d_ = focus + right * frame_h / 6 - up_ * frame_h / 14 - cam.location  # verticais retas, como lente de arquitetura: a câmera olha na horizontal e o quadro sobe/desce pelo shift
+        cam.rotation_euler.x = math.pi / 2
+        cam.data.shift_y = d_.z / math.hypot(d_.x, d_.y) * cam.data.lens / 36
+    else:
+        cam.data.shift_y = 0
     cam.data.dof.use_dof = in_use  # fundo desfocado dá a cara de foto de ambiente
     cam.data.dof.focus_distance = (cam.location - focus).length
     scene.render.filepath = f"{outdir}/render_{i}.jpg"
