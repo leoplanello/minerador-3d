@@ -152,3 +152,16 @@ def test_desempenho_depois_de_publicado_sugere_manter_ou_sair():
     ruim = sel.perf_summary(pts(("2026-10-01", 0), ("2026-10-21", 10)), 12, 30)
     assert ruim["suggestion"] == "sai" and "margem" in ruim["why"]  # vende, mas a margem não paga
     assert sel.perf_summary(pts(("2026-10-01", 3), ("2026-10-21", 3)), 40, 30)["suggestion"] == "sai"  # não vendeu nada
+
+
+def test_plano_de_fotos_e_amostra():
+    p = sel.photo_plan(["render_1.jpg", "render_2.jpg"])
+    assert p["real"] == [] and "Sem foto real" in p["warnings"][0] and "renderizada em 3D" in p["warnings"][0] and len(p["rules"]) == 4
+    assert all("http" in r for r in p["rules"][:2])  # as regras citam a página oficial
+    p = sel.photo_plan(["render_1.jpg", "photo_1.jpg"])
+    assert p["real"] == ["photo_1.jpg"] and len(p["warnings"]) == 2 and "capa é um render" in p["warnings"][1]
+    assert sel.photo_plan(["photo_1.jpg", "photo_2.jpg", "photo_3.jpg", "render_1.jpg"])["warnings"] == []
+    assert sel.clean_sample(dict(impressa=1, l="60", a="40,5".replace(",", "."), p="", notas=" ok "))== dict(impressa=True, notas="ok", l=60.0, a=40.5, p=None)
+    for ruim in (dict(l="abc"), dict(l="0"), dict(a="5000")):
+        with pytest.raises(ValueError):
+            sel.clean_sample(ruim)

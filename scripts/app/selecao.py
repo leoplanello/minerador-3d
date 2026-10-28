@@ -383,3 +383,41 @@ def perf_summary(points, margin_pct, target_pct, min_days=14, min_per_day=0.2):
     if (per_day or 0) < min_per_day:
         return dict(days=days, sold=sold, per_day=per_day, suggestion="sai", why=f"{per_day} vendas por dia, abaixo de {min_per_day:g}")
     return dict(days=days, sold=sold, per_day=per_day, suggestion="mantem", why="vende e dá a margem esperada")
+
+
+# ---------- foto real: amostra impressa + imagens do ambiente em 3D ----------
+PHOTO_RULES = [
+    "A capa deve ser foto do produto real: bem iluminada, centralizada, sem texto, logotipo, marca d'água ou borda (https://www.mercadolivre.com.br/ajuda/805).",
+    "Nas outras categorias o Mercado Livre pede fundo branco; em Casa e Móveis ele aceita fundo em contexto e pede a capa no ambiente de uso, com as fotos de frente, trás, lados, dimensões e detalhes em fundo branco "
+    "(https://vendedores.mercadolivre.com.br/nota/requisitos-de-fotos-para-sillones).",
+    "Imagens renderizadas em 3D estão entre as fotos não recomendadas em Casa e Móveis: use o ambiente em 3D como complemento, depois das fotos reais.",
+    "Não use fotos do anúncio de outro vendedor nem da página do modelo.",
+]
+
+
+def photo_plan(names):
+    """names: imagens visíveis do produto (photo_N.jpg = foto real enviada; render_N.jpg = Blender), na ordem escolhida. Devolve quantas são reais e os avisos da regra do Mercado Livre."""
+    real = [n for n in names if n.startswith("photo")]
+    renders = [n for n in names if not n.startswith("photo")]
+    warn = []
+    if not real:
+        warn.append("Sem foto real: o Mercado Livre não recomenda imagem renderizada em 3D como foto do anúncio (Casa e Móveis). Imprima uma amostra e fotografe.")
+    elif len(real) < 3:
+        warn.append(f"Só {len(real)} foto(s) real(is): tire pelo menos 3 (perspectiva 3/4, em uso, com as dimensões ou uma régua).")
+    if real and names and names[0].startswith("render"):
+        warn.append("A capa é um render, mas já há foto real: coloque a foto real em primeiro.")
+    return dict(real=real, renders=renders, warnings=warn, rules=PHOTO_RULES)
+
+
+def clean_sample(d):
+    """Amostra impressa: se já foi impressa, as medidas reais em mm (comprimento, altura, profundidade) e uma nota."""
+    out = dict(impressa=bool(d.get("impressa")), notas=str(d.get("notas", "")).strip()[:300])
+    for k in ("l", "a", "p"):
+        v = d.get(k)
+        try:
+            out[k] = None if v in (None, "") else float(v)
+        except (TypeError, ValueError):
+            raise ValueError("medida da amostra inválida")
+        if out[k] is not None and not 0 < out[k] <= 1000:
+            raise ValueError("a medida da amostra deve ficar entre 0 e 1000 mm")
+    return out

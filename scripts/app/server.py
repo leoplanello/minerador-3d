@@ -180,7 +180,7 @@ def media_files(lid):
     names = [f.name for f in d.glob("*.jpg") if MEDIA_RE.fullmatch(f.name)] if d.exists() else []
     saved = get_setting(f"media:{lid}", {})
     order, hidden = saved.get("order", []), set(saved.get("hidden", []))
-    names.sort(key=lambda n: (order.index(n) if n in order else 10**6, n.startswith("photo"), int(re.search(r"\d+", n).group())))
+    names.sort(key=lambda n: (order.index(n) if n in order else 10**6, not n.startswith("photo"), int(re.search(r"\d+", n).group())))  # sem ordem escolhida, a foto real vem antes do render
     return [dict(name=n, hidden=n in hidden) for n in names]
 
 
@@ -336,6 +336,17 @@ def confirm_kit(lid):
         c.execute("UPDATE steps SET status='ok' WHERE listing_id=? AND name='kit'", (lid,))
 
 
+def leia_me_fotos(cand):
+    """Texto do kit sobre as fotos: ordem, avisos e as regras do Mercado Livre; com a amostra medida, as dimensões reais."""
+    am, f = cand["amostra"], cand["fotos"]
+    linhas = ["Ordem das imagens: a capa é a 01. Foto real primeiro, ambiente em 3D depois.", ""]
+    linhas += ["AVISO: " + w for w in f["warnings"]] + ([""] if f["warnings"] else [])
+    linhas += ["Regras do Mercado Livre sobre fotos:"] + ["- " + r for r in f["rules"]]
+    if am["impressa"] and am["l"]:
+        linhas += ["", f"Amostra impressa e medida: {am['l']} x {am['a']} x {am['p']} mm. {am['notas']}".strip()]
+    return "\n".join(linhas)
+
+
 def kit_zip(lid):
     cand = next((c for c in candidates() if c["id"] == lid), None)
     if not cand or not cand["kit"]:
@@ -349,8 +360,10 @@ def kit_zip(lid):
         z.writestr("dados.json", json.dumps(dict(titulo=k["title"], preco=cand["target_price"], palavras_chave=k["keywords"],
                                                  tempo_min=sl["minutes"] if sl else None, gramas=sl["grams"] if sl else None,
                                                  margem=cand["margin"], origem=cand["url"]), ensure_ascii=False, indent=1))
-        for n in cand["images"]:
-            z.write(PRODUCTS / str(lid) / "renders" / n, f"imagens/{n}")
+        for i, n in enumerate(cand["images"], 1):  # a ordem do kit é a da tela: "01-" na frente do nome para a Central do Vendedor respeitar a capa
+            z.write(PRODUCTS / str(lid) / "renders" / n, f"imagens/{i:02d}-{'foto-real' if n.startswith('photo') else 'ambiente-3d'}-{n}")
+        am = cand["amostra"]
+        z.writestr("LEIA-ME-fotos.txt", leia_me_fotos(cand))
     return buf.getvalue()
 
 
@@ -920,7 +933,7 @@ def candidates():
             comp = None
             if sl and l["status"] == "approved":  # margem ao preço dos concorrentes: só para quem já tem tempo e peso
                 comp = {ch: custos.at_competitor(cc, sl["minutes"], sl["grams"], selecao.price_band(selecao.similar_rows(rows[-1], rows), l["id"]), ch) for ch in ("ml", "shopee")}
-            rows[-1].update(margem_concorrente=comp, tese=get_setting(f"tese:{l['id']}"), filtros=selecao.evaluate(l["title"], F, mesh.get("stats"), sl["minutes"] if sl else None, mesh.get("support")) | dict(mesh_msg=mesh.get("msg", ""), mesh_status=mesh.get("status", ""),
+            rows[-1].update(amostra=get_setting(f"amostra:{l['id']}") or dict(impressa=False, l=None, a=None, p=None, notas=""), fotos=selecao.photo_plan(rows[-1]["images"]), margem_concorrente=comp, tese=get_setting(f"tese:{l['id']}"), filtros=selecao.evaluate(l["title"], F, mesh.get("stats"), sl["minutes"] if sl else None, mesh.get("support")) | dict(mesh_msg=mesh.get("msg", ""), mesh_status=mesh.get("status", ""),
                             stats=mesh.get("stats")), per_day=spd, age_days=selecao.age_days(l["created"]), champion=selecao.is_champion(spd, F))
         return sorted(rows, key=lambda r: (r["filtros"]["status"] == "reprovado", -r["score"]))  # reprovados nos filtros vão para o fim
 
@@ -1363,6 +1376,15 @@ class H(BaseHTTPRequestHandler):
         if path == "/api/funil/leitura":
             try:
                 read_performance(int(data["id"]), data.get("sold"), data.get("price"))
+            except (ValueError, TypeError, KeyError) as e:
+                return self._json(dict(error=str(e)), 400)
+            return self._json(dict(ok=True))
+        if path == "/api/amostra":
+            try:
+                lid = int(data["id"])
+                if lid not in {c["id"] for c in candidates()}:
+                    raise ValueError("produto não encontrado")
+                put_setting(f"amostra:{lid}", selecao.clean_sample(data))
             except (ValueError, TypeError, KeyError) as e:
                 return self._json(dict(error=str(e)), 400)
             return self._json(dict(ok=True))

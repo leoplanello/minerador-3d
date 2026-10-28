@@ -299,3 +299,25 @@ def test_tela_selecao_funil_e_familias(gui):
         page.wait_for_selector("text=Funil vazio")
         assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
         b.close()
+
+
+def test_foto_real_amostra_e_aviso_no_produto_aprovado(gui):
+    with playwright.sync_playwright() as p:
+        b = p.chromium.launch(channel="chrome")
+        page = b.new_page(viewport={"width": 1280, "height": 800})
+        page.goto(f"{gui}/#/producao/2")
+        page.wait_for_selector(".sel-foto")
+        txt = page.inner_text(".sel-foto")
+        assert "Imprima uma amostra" in txt and "2 h 0 min" in txt
+        page.check("#amimp")
+        page.fill("#aml", "60")
+        page.fill("#ama", "40")
+        page.fill("#amp", "30")
+        page.click("#amsave")
+        page.wait_for_timeout(800)
+        am = server.get_setting("amostra:2")
+        assert am["impressa"] is True and (am["l"], am["a"], am["p"]) == (60.0, 40.0, 30.0)
+        page.goto(f"{gui}/#/producao/1")  # produto a revisar: sem a seção de foto real
+        page.wait_for_selector("#selcard:not([hidden])")
+        assert page.locator(".sel-foto").count() == 0
+        b.close()

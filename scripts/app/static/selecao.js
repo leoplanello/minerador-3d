@@ -45,7 +45,7 @@ const SEL = {
   // ---------- cartão do produto ----------
   render(c) {
     const el = $('selcard'); if (!el) return;
-    const sig = JSON.stringify([c.filtros, c.per_day, c.age_days, c.created, c.price, c.sold, c.tese]);
+    const sig = JSON.stringify([c.filtros, c.per_day, c.age_days, c.created, c.price, c.sold, c.tese, c.amostra, c.fotos, c.status]);
     if (this.sig[c.id] === sig && el.dataset.id === String(c.id)) return;       // nada mudou: não apaga o que se digita
     if (el.contains(document.activeElement) && document.activeElement.matches('input,textarea')) return;
     this.sig[c.id] = sig; el.dataset.id = c.id; el.hidden = false;
@@ -66,8 +66,9 @@ const SEL = {
         <p class="small" style="margin:6px 0">${c.per_day == null ? 'Sem a data de publicação não dá para calcular. O Mercado Livre não mostra a data na página; informe a que você vê no anúncio ou no seu complemento do navegador.'
           : `<b>${String(c.per_day).replace('.', ',')} vendas por dia</b> (${num(c.sold)} vendidos em ${num(c.age_days)} dias)${c.champion ? ' · <span class="chip ok">campeão</span>' : ''}`}</p>
         <div id="selsim" class="small mut">Procurando anúncios parecidos…</div></div>
-      ${this.thesis(c)}`;
+      ${this.thesis(c)}${this.photos(c)}`;
     this.bindThesis(c);
+    this.bindPhotos(c);
     $('seleval').onclick = async () => { const r = await post('/api/filtros/avaliar', {id: c.id}); toast(r.error || 'Medindo e fatiando…'); load(); };
     $('selsave').onclick = async () => { const r = await post('/api/listing/created', {id: c.id, created: $('selcreated').value}); toast(r.error || 'Data salva'); if (!r.error) { delete this.sig[c.id]; load(); } };
     fetch('/api/similares?id=' + c.id).then(r => r.json()).then(r => { const box = $('selsim'); if (!box || r.error) return;
@@ -101,6 +102,26 @@ const SEL = {
       const r = await post('/api/tese', {id: c.id, dor: $('tdor').value, faixa_min: $('tmin').value, faixa_max: $('tmax').value, similares});
       toast(r.error || 'Tese salva'); if (!r.error) { delete this.sig[c.id]; load(); } };
   },
+};
+
+SEL.photos = function (c) {
+  if (c.status !== 'approved') return '';
+  const a = c.amostra, f = c.fotos;
+  return `<div class="sel-foto" style="margin-top:14px"><h3 style="margin:0 0 6px">Foto real da peça</h3>
+    <ol class="small" style="margin:0 0 8px 18px"><li>Imprima uma amostra (${c.slice ? `${Math.floor(c.slice.minutes / 60)} h ${c.slice.minutes % 60} min, ${String(c.slice.grams).replace('.', ',')} g` : 'depois de fatiar'}).</li>
+      <li>Meça a peça pronta e anote abaixo.</li><li>Fotografe: perspectiva 3/4 com luz de janela, a peça em uso e uma com régua ou as medidas. Envie em <b>Imagens</b> (“Enviar foto”).</li>
+      <li>No kit, a foto real vai primeiro e o ambiente em 3D depois.</li></ol>
+    <div class="row"><label class="chk"><input type="checkbox" id="amimp" ${a.impressa ? 'checked' : ''}> Amostra impressa</label>
+      ${['l', 'a', 'p'].map((k, i) => `<label class="small">${['Comprimento', 'Altura', 'Profundidade'][i]} (mm)<input id="am${k}" type="number" min="1" max="1000" step="0.1" style="width:90px" value="${a[k] ?? ''}"></label>`).join('')}
+      <button id="amsave" class="sm">Salvar amostra</button></div>
+    <p class="small" style="margin:6px 0"><b>${f.real.length}</b> foto(s) real(is) e <b>${f.renders.length}</b> imagem(ns) de ambiente em 3D.</p>
+    ${f.warnings.map(w => `<p class="small" style="color:var(--red);margin:2px 0">${esc(w)}</p>`).join('')}
+    <details class="small"><summary>Regras do Mercado Livre sobre fotos</summary><ul style="margin:4px 0 0 18px">${f.rules.map(r => `<li>${esc(r).replace(/(https:\/\/\S+?)\)?\.?$/, m => '<a href="' + m.replace(/[).]+$/, '') + '" target="_blank" rel="noopener">fonte</a>')}</li>`).join('')}</ul></details></div>`;
+};
+SEL.bindPhotos = function (c) {
+  const b = $('amsave'); if (!b) return;
+  b.onclick = async () => { const r = await post('/api/amostra', {id: c.id, impressa: $('amimp').checked, l: $('aml').value, a: $('ama').value, p: $('amp').value});
+    toast(r.error || 'Amostra salva'); if (!r.error) { delete this.sig[c.id]; load(); } };
 };
 
 // ---------- tela Seleção: funil de abrir e fechar + famílias ----------
