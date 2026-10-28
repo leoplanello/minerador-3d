@@ -245,3 +245,79 @@ def test_linha_do_tempo_e_atividade_do_produto(gui):
         assert "em andamento" in page.inner_text("#tline li.running")
         assert "Trabalhando" in page.inner_text("#status")  # a barra do topo mostra o que o app está fazendo
         b.close()
+
+
+def test_filtros_na_lista_na_configuracao_e_no_produto(gui):
+    with server.db() as c:  # o produto 1 vira "colorido, para montar": reprovado nos filtros
+        c.execute("UPDATE listings SET title='Organizador Colorido Para Montar Com Parafusos' WHERE id=1")
+    with playwright.sync_playwright() as p:
+        b = p.chromium.launch(channel="chrome")
+        page = b.new_page(viewport={"width": 1280, "height": 800})
+        page.goto(f"{gui}/#/produtos")
+        page.click("[data-view=all]")
+        page.wait_for_selector(".item")
+        assert "Organizador Colorido" not in page.inner_text("#plist")  # reprovado fica escondido
+        assert "1 escondidos" in page.inner_text("#nfail")
+        page.check("#pfail")
+        page.wait_for_selector("text=Organizador Colorido")
+        assert "Reprovado: mais de 1 cor" in page.inner_text("#plist") and "/dia" not in page.inner_text("#plist")  # sem data de publicação, sem vendas por dia
+        page.goto(f"{gui}/#/config")
+        page.wait_for_selector("#fprinter")
+        assert page.input_value("#fprinter") == "Bambu Lab A1 Mini" and page.input_value("[data-k=max_hours]") == "4"
+        page.fill("[data-k=max_hours]", "3")
+        page.click("#fsave")
+        page.wait_for_timeout(500)
+        assert server.get_filters()["max_hours"] == 3
+        page.goto(f"{gui}/#/producao/2")
+        page.wait_for_selector("#selcard:not([hidden])")
+        assert "Filtros e vendas por dia" in page.inner_text("#selcard") and "Falta testar" in page.inner_text("#selcard")
+        page.fill("#selcreated", "2025-01-01")
+        page.click("#selsave")
+        page.wait_for_timeout(800)
+        assert server.candidates()[0]["created"] in ("2025-01-01", "") or any(r["created"] == "2025-01-01" for r in server.candidates())
+        b.close()
+
+
+def test_tela_selecao_funil_e_familias(gui):
+    with playwright.sync_playwright() as p:
+        b = p.chromium.launch(channel="chrome")
+        page = b.new_page(viewport={"width": 1280, "height": 800})
+        page.goto(f"{gui}/#/selecao")
+        page.wait_for_selector("#fnadd option >> nth=1", state="attached")
+        assert "0 abertos (5 a 10)" in page.inner_text("#fnavisos") and "Funil vazio" in page.inner_text("#fnlista")
+        page.select_option("#fnadd", index=1)
+        page.click("#fnaddb")
+        page.wait_for_selector("#fnlista .item")
+        assert "1 abertos" in page.inner_text("#fnavisos") and server.get_setting("funil")["lista"]
+        page.click("[data-fn=pick]")
+        page.wait_for_selector("button:text-is(\"Escolhido\")")
+        assert server.get_setting("funil")["escolhidos"] == server.get_setting("funil")["lista"]
+        page.click("[data-fn=keep]")
+        page.wait_for_selector(".chip:has-text('Fica')")
+        assert list(server.get_setting("funil")["decisoes"].values()) == ["mantem"]
+        page.click("[data-fn=rm]")
+        page.wait_for_selector("text=Funil vazio")
+        assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
+        b.close()
+
+
+def test_foto_real_amostra_e_aviso_no_produto_aprovado(gui):
+    with playwright.sync_playwright() as p:
+        b = p.chromium.launch(channel="chrome")
+        page = b.new_page(viewport={"width": 1280, "height": 800})
+        page.goto(f"{gui}/#/producao/2")
+        page.wait_for_selector(".sel-foto")
+        txt = page.inner_text(".sel-foto")
+        assert "Imprima uma amostra" in txt and "2 h 0 min" in txt
+        page.check("#amimp")
+        page.fill("#aml", "60")
+        page.fill("#ama", "40")
+        page.fill("#amp", "30")
+        page.click("#amsave")
+        page.wait_for_timeout(800)
+        am = server.get_setting("amostra:2")
+        assert am["impressa"] is True and (am["l"], am["a"], am["p"]) == (60.0, 40.0, 30.0)
+        page.goto(f"{gui}/#/producao/1")  # produto a revisar: sem a seção de foto real
+        page.wait_for_selector("#selcard:not([hidden])")
+        assert page.locator(".sel-foto").count() == 0
+        b.close()

@@ -11,6 +11,7 @@ import sys
 import threading
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import tempfile
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
@@ -27,6 +28,7 @@ import slice as fatiar  # noqa: E402
 import video as videos  # noqa: E402
 import identity  # noqa: E402
 import polyhaven  # noqa: E402
+import selecao  # noqa: E402
 import texto  # noqa: E402  (scripts/app/slice.py; mesmo diretório do server.py)
 from classify import score  # noqa: E402
 import model_search  # noqa: E402
@@ -57,7 +59,7 @@ def init():
         c.executescript((paths.RESOURCES / "db" / "schema.sql").read_text(encoding="utf-8"))
         if "profile" not in [r[1] for r in c.execute("PRAGMA table_info(stores)")]:  # banco criado antes dos perfis
             c.execute("ALTER TABLE stores ADD COLUMN profile TEXT DEFAULT ''")
-        for table, col, ddl in [("listings", "thumb", "TEXT DEFAULT ''"), ("listings", "image", "INTEGER DEFAULT 0"),
+        for table, col, ddl in [("listings", "thumb", "TEXT DEFAULT ''"), ("listings", "image", "INTEGER DEFAULT 0"), ("listings", "created", "TEXT DEFAULT ''"),
                                 ("stores", "name", "TEXT DEFAULT ''")]:  # bancos criados antes dessas colunas
             if col not in [r[1] for r in c.execute(f"PRAGMA table_info({table})")]:
                 c.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}")
@@ -180,7 +182,7 @@ def media_files(lid):
     names = [f.name for f in d.glob("*.jpg") if MEDIA_RE.fullmatch(f.name)] if d.exists() else []
     saved = get_setting(f"media:{lid}", {})
     order, hidden = saved.get("order", []), set(saved.get("hidden", []))
-    names.sort(key=lambda n: (order.index(n) if n in order else 10**6, n.startswith("photo"), int(re.search(r"\d+", n).group())))
+    names.sort(key=lambda n: (order.index(n) if n in order else 10**6, not n.startswith("photo"), int(re.search(r"\d+", n).group())))  # sem ordem escolhida, a foto real vem antes do render
     return [dict(name=n, hidden=n in hidden) for n in names]
 
 
@@ -336,6 +338,17 @@ def confirm_kit(lid):
         c.execute("UPDATE steps SET status='ok' WHERE listing_id=? AND name='kit'", (lid,))
 
 
+def leia_me_fotos(cand):
+    """Texto do kit sobre as fotos: ordem, avisos e as regras do Mercado Livre; com a amostra medida, as dimensões reais."""
+    am, f = cand["amostra"], cand["fotos"]
+    linhas = ["Ordem das imagens: a capa é a 01. Foto real primeiro, ambiente em 3D depois.", ""]
+    linhas += ["AVISO: " + w for w in f["warnings"]] + ([""] if f["warnings"] else [])
+    linhas += ["Regras do Mercado Livre sobre fotos:"] + ["- " + r for r in f["rules"]]
+    if am["impressa"] and am["l"]:
+        linhas += ["", f"Amostra impressa e medida: {am['l']} x {am['a']} x {am['p']} mm. {am['notas']}".strip()]
+    return "\n".join(linhas)
+
+
 def kit_zip(lid):
     cand = next((c for c in candidates() if c["id"] == lid), None)
     if not cand or not cand["kit"]:
@@ -349,8 +362,10 @@ def kit_zip(lid):
         z.writestr("dados.json", json.dumps(dict(titulo=k["title"], preco=cand["target_price"], palavras_chave=k["keywords"],
                                                  tempo_min=sl["minutes"] if sl else None, gramas=sl["grams"] if sl else None,
                                                  margem=cand["margin"], origem=cand["url"]), ensure_ascii=False, indent=1))
-        for n in cand["images"]:
-            z.write(PRODUCTS / str(lid) / "renders" / n, f"imagens/{n}")
+        for i, n in enumerate(cand["images"], 1):  # a ordem do kit é a da tela: "01-" na frente do nome para a Central do Vendedor respeitar a capa
+            z.write(PRODUCTS / str(lid) / "renders" / n, f"imagens/{i:02d}-{'foto-real' if n.startswith('photo') else 'ambiente-3d'}-{n}")
+        am = cand["amostra"]
+        z.writestr("LEIA-ME-fotos.txt", leia_me_fotos(cand))
     return buf.getvalue()
 
 
@@ -523,6 +538,10 @@ def run_slice(lid):
             step("ok")
             with lock, db() as c:
                 c.execute("UPDATE steps SET status='ok' WHERE listing_id=? AND name='cost'", (lid,))
+        try:
+            eval_filters(lid)  # filtros do produto: medidas e teste de suporte (fora do lock do fatiamento)
+        except Exception:
+            pass  # o card mostra "não testado" e o botão Avaliar tenta de novo
     except Exception as e:  # erro fica visível no card da GUI
         step("error", str(e)[:300])
 
@@ -867,8 +886,114 @@ def run_store(store_id, url, profile):
         setstatus("error", str(e)[:300])
 
 
+def get_filters():
+    try:
+        return selecao.clean_filters(get_setting("filters", {}))
+    except ValueError:
+        return selecao.clean_filters({})
+
+
+def eval_filters(lid, support=True):
+    """Mede o modelo (dimensões, espessura média, área em balanço) e, com support, faz o fatiamento de teste com suporte ligado. Guarda em mesh:<id>."""
+    with db() as c:
+        m = c.execute("SELECT file_path FROM models WHERE listing_id=?", (lid,)).fetchone()
+    if not m or not m["file_path"]:
+        raise ValueError("envie o modelo 3D antes de avaliar os filtros")
+    path = ROOT / m["file_path"]
+    prev = get_setting(f"mesh:{lid}", {})
+    put_setting(f"mesh:{lid}", dict(prev, status="running", msg=""))
+    data = dict(prev, status="ok", msg="")
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            stl = path
+            if path.suffix.lower() == ".3mf":
+                stl = Path(tmp) / "modelo.stl"
+                renderizar.threemf_to_stl(path, stl)
+            data["stats"] = selecao.mesh_stats(stl)
+        if support:
+            try:
+                with slice_lock:
+                    r = fatiar.check_support(path, PRODUCTS / str(lid) / "slice_suporte")
+                data.update(support=r["support"], support_minutes=r["minutes"])
+            except ValueError as e:
+                data.update(support=None, msg="teste de suporte indisponível: " + str(e)[:160])
+    except Exception as e:
+        data.update(status="error", msg=str(e)[:200])
+    put_setting(f"mesh:{lid}", data)
+    return data
+
+
+def propose_tese(lid):
+    """O Claude propõe a dor e os tipos de produto parecidos a partir da foto e dos títulos. A faixa de preço vem dos anúncios parecidos já lidos. A pessoa edita depois."""
+    prev = get_setting(f"tese:{lid}") or {}
+    put_setting(f"tese:{lid}", dict(prev, status="running", msg=""))
+    try:
+        cands = candidates()
+        me = next(c for c in cands if c["id"] == lid)
+        photo = IMAGES / f"{lid}.img"
+        if not photo.is_file():
+            raise ValueError("sem a foto do anúncio guardada")
+        sim = selecao.similar_rows(me, cands)
+        t = selecao.propose_thesis(me["title"], photo, [r["title"] for r in sim if r["id"] != lid])
+        band = selecao.price_band(sim, lid)
+        put_setting(f"tese:{lid}", dict(status="ok", msg="", dor=t["dor"], similares=t["similares"], faixa_min=band["min"] if band else None, faixa_max=band["max"] if band else None,
+                                        faixa_fonte="anúncios parecidos lidos" if band else "", proposta=True))
+    except Exception as e:
+        put_setting(f"tese:{lid}", dict(prev, status="error", msg=str(e)[:200]))
+
+
+def selecao_overview():
+    """Tela Seleção: famílias de produtos e o funil de abrir e fechar, com o desempenho de quem já foi publicado."""
+    cands = candidates()
+    by_id = {c["id"]: c for c in cands}
+    fams = selecao.families([dict(id=c["id"], title=c["title"], status=c["status"], grams=(c["slice"] or {}).get("grams"), price=c["price"], score=c["score"], tese=c["tese"]) for c in cands])
+    funil = get_setting("funil") or dict(lista=[], escolhidos=[], decisoes={})
+    target = get_costs()["margem_alvo_pct"]
+    rows = []
+    for lid in funil["lista"]:
+        c = by_id.get(lid)
+        if not c:
+            continue
+        pub = (c["publications"] or {}).get("ml")
+        pts = get_setting(f"perf:{lid}") or []
+        margin = ((c["margin"] or {}).get("ml") or {}).get("margem_pct")
+        rows.append(dict(id=lid, title=c["title"], thumb=c["thumb"], image=c["image"], price=c["price"], score=c["score"], per_day=c["per_day"], champion=c["champion"], filtros=c["filtros"]["status"],
+                         motivo=(c["filtros"]["reasons"] or [""])[0], escolhido=lid in funil["escolhidos"], decisao=funil["decisoes"].get(str(lid), ""), status=c["status"],
+                         publicado=bool(pub and pub.get("external_id")), margem=margin, leituras=pts, desempenho=selecao.perf_summary(pts, margin, target) if pts else None))
+    return dict(families=fams, funil=funil, linhas=rows, limites=dict(abrir=selecao.FUNNEL_OPEN, escolher=selecao.FUNNEL_PICK), meta_margem=target,
+                candidatos=[dict(id=c["id"], title=c["title"], score=c["score"], filtros=c["filtros"]["status"]) for c in cands if c["status"] != "discarded"][:60])
+
+
+def read_performance(lid, sold=None, price=None):
+    """Uma leitura de desempenho de um anúncio publicado: manual (sold, price) ou, sem isso, pelo anúncio no Mercado Livre (API oficial)."""
+    c = next((c for c in candidates() if c["id"] == lid), None)
+    if not c:
+        raise ValueError("produto não encontrado")
+    if sold is None:
+        pub = (c["publications"] or {}).get("ml")
+        if not pub or not pub.get("external_id"):
+            raise ValueError("este produto não foi publicado no Mercado Livre pelo app; informe as vendas à mão")
+        item = ml.call("GET", f"/items/{pub['external_id']}")
+        sold, price = item.get("sold_quantity"), item.get("price")
+    sold = int(sold)
+    if sold < 0:
+        raise ValueError("vendas não podem ser negativas")
+    pts = get_setting(f"perf:{lid}") or []
+    pts.append(dict(ts=datetime.now().isoformat(timespec="seconds"), sold=sold, price=float(price) if price not in (None, "") else None))
+    put_setting(f"perf:{lid}", pts[-200:])
+
+
+def set_created(lid, created):
+    created = str(created or "").strip()
+    if created and selecao.age_days(created) is None:
+        raise ValueError("data de publicação inválida (use AAAA-MM-DD, no passado)")
+    with lock, db() as c:
+        c.execute("UPDATE listings SET created=? WHERE id=?", (created[:10], lid))
+
+
 def candidates():
     cc = get_costs()
+    F = get_filters()
     with db() as c:
         rows = []
         for l in c.execute("SELECT l.*, s.name AS store_name, s.url AS store_url FROM listings l JOIN stores s ON s.id=l.store_id"):
@@ -902,7 +1027,14 @@ def candidates():
                                       slice_msg=json.loads(slmsg["data"]).get("msg", "") if slmsg else "", history=[s["reviews"] for s in snaps],
                                       score=score(last["sold"], last["reviews"], l["price"], l["is_3d"], last["rank"], growth),
                                       steps=steps))
-        return sorted(rows, key=lambda r: -r["score"])
+            mesh = get_setting(f"mesh:{l['id']}", {}) or {}
+            spd = selecao.sales_per_day(last["sold"], l["created"])
+            comp = None
+            if sl and l["status"] == "approved":  # margem ao preço dos concorrentes: só para quem já tem tempo e peso
+                comp = {ch: custos.at_competitor(cc, sl["minutes"], sl["grams"], selecao.price_band(selecao.similar_rows(rows[-1], rows), l["id"]), ch) for ch in ("ml", "shopee")}
+            rows[-1].update(amostra=get_setting(f"amostra:{l['id']}") or dict(impressa=False, l=None, a=None, p=None, notas=""), fotos=selecao.photo_plan(rows[-1]["images"]), margem_concorrente=comp, tese=get_setting(f"tese:{l['id']}"), filtros=selecao.evaluate(l["title"], F, mesh.get("stats"), sl["minutes"] if sl else None, mesh.get("support")) | dict(mesh_msg=mesh.get("msg", ""), mesh_status=mesh.get("status", ""),
+                            stats=mesh.get("stats")), per_day=spd, age_days=selecao.age_days(l["created"]), champion=selecao.is_champion(spd, F))
+        return sorted(rows, key=lambda r: (r["filtros"]["status"] == "reprovado", -r["score"]))  # reprovados nos filtros vão para o fim
 
 
 _ML_CACHE = {"at": 0, "data": None}
@@ -1131,6 +1263,18 @@ class H(BaseHTTPRequestHandler):
             return self._json(video_estimate(cfg, next(iter(sorted((PRODUCTS / str(lid) / "kit").glob("voz.*"))), None) if lid else None))
         if path == "/api/costs":
             return self._json(dict(values=get_costs(), labels=custos.LABELS))
+        if path == "/api/filtros":
+            return self._json(dict(values=get_filters(), labels=selecao.LABELS))
+        if path == "/api/selecao":
+            return self._json(selecao_overview())
+        if path == "/api/similares":
+            lid = int(parse_qs(url.query).get("id", ["0"])[0])
+            cands = candidates()
+            me = next((c for c in cands if c["id"] == lid), None)
+            if not me:
+                return self._json(dict(error="produto não encontrado"), 404)
+            sim = selecao.similar_rows(me, cands)
+            return self._json(dict(rows=selecao.compare_similar(sim), price=selecao.price_band(sim, me["id"])))
         m = re.fullmatch(r"/api/kit/(\d+)\.zip", path)
         if m:
             try:
@@ -1297,6 +1441,65 @@ class H(BaseHTTPRequestHandler):
                     return self._json(dict(error="aprove o produto antes" if not st else "já está gerando"), 400)
                 c.execute("UPDATE steps SET status='running' WHERE listing_id=? AND name='copy'", (data["id"],))
             threading.Thread(target=run_copy, args=(data["id"],), daemon=True).start()
+            return self._json(dict(ok=True))
+        if path == "/api/filtros":
+            try:
+                put_setting("filters", selecao.clean_filters(data))
+            except (ValueError, TypeError) as e:
+                return self._json(dict(error=str(e)), 400)
+            return self._json(dict(ok=True))
+        if path == "/api/filtros/avaliar":
+            try:
+                lid = int(data["id"])
+                if lid not in {c["id"] for c in candidates()}:
+                    raise ValueError("produto não encontrado")
+            except (ValueError, TypeError, KeyError) as e:
+                return self._json(dict(error=str(e)), 400)
+            threading.Thread(target=lambda: eval_filters(lid), daemon=True).start()
+            return self._json(dict(ok=True))
+        if path == "/api/tese/propor":
+            try:
+                lid = int(data["id"])
+                if lid not in {c["id"] for c in candidates()}:
+                    raise ValueError("produto não encontrado")
+            except (ValueError, TypeError, KeyError) as e:
+                return self._json(dict(error=str(e)), 400)
+            threading.Thread(target=propose_tese, args=(lid,), daemon=True).start()
+            return self._json(dict(ok=True))
+        if path == "/api/tese":
+            try:
+                lid = int(data["id"])
+                put_setting(f"tese:{lid}", selecao.clean_thesis(data) | dict(status="ok", msg="", proposta=False))
+            except (ValueError, TypeError, KeyError) as e:
+                return self._json(dict(error=str(e)), 400)
+            return self._json(dict(ok=True))
+        if path == "/api/funil":
+            try:
+                funil, avisos = selecao.clean_funnel(data, {c["id"] for c in candidates()})
+                put_setting("funil", funil)
+            except (ValueError, TypeError, KeyError) as e:
+                return self._json(dict(error=str(e)), 400)
+            return self._json(dict(ok=True, avisos=avisos))
+        if path == "/api/funil/leitura":
+            try:
+                read_performance(int(data["id"]), data.get("sold"), data.get("price"))
+            except (ValueError, TypeError, KeyError) as e:
+                return self._json(dict(error=str(e)), 400)
+            return self._json(dict(ok=True))
+        if path == "/api/amostra":
+            try:
+                lid = int(data["id"])
+                if lid not in {c["id"] for c in candidates()}:
+                    raise ValueError("produto não encontrado")
+                put_setting(f"amostra:{lid}", selecao.clean_sample(data))
+            except (ValueError, TypeError, KeyError) as e:
+                return self._json(dict(error=str(e)), 400)
+            return self._json(dict(ok=True))
+        if path == "/api/listing/created":
+            try:
+                set_created(int(data["id"]), data.get("created", ""))
+            except (ValueError, TypeError, KeyError) as e:
+                return self._json(dict(error=str(e)), 400)
             return self._json(dict(ok=True))
         if path in ("/api/costs", "/api/price"):
             try:

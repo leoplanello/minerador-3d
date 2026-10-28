@@ -127,7 +127,7 @@ def test_kit_confirmacao_e_zip(tmp_path, monkeypatch):
     cand = server.candidates()[0]
     assert cand["steps"]["kit"] == "ok" and cand["kit"]["confirmed"] == 1
     names = zipfile.ZipFile(io.BytesIO(server.kit_zip(1))).namelist()
-    assert {"anuncio.txt", "roteiros.txt", "dados.json", "imagens/render_1.jpg"} <= set(names)
+    assert {"anuncio.txt", "roteiros.txt", "dados.json", "LEIA-ME-fotos.txt", "imagens/01-ambiente-3d-render_1.jpg"} <= set(names)
     server.set_kit(1, dict(title="Outro título", description="d" * 90))  # editar o texto desfaz a confirmação
     assert server.candidates()[0]["steps"]["kit"] == "pending" and server.candidates()[0]["kit"]["confirmed"] == 0
 
@@ -218,7 +218,7 @@ def test_midia_ordem_ocultar_e_fotos_proprias(tmp_path, monkeypatch):
     assert server.add_photo(1, buf.getvalue()) == "photo_1.jpg"  # PNG vira JPG e cabe em 2400 px
     assert Image.open(d / "photo_1.jpg").size[0] == 2400
     (c,) = server.candidates()
-    assert c["steps"]["images"] == "ok" and c["images"] == ["render_1.jpg", "render_2.jpg", "render_10.jpg", "photo_1.jpg"]  # render_10 depois do 2
+    assert c["steps"]["images"] == "ok" and c["images"] == ["photo_1.jpg", "render_1.jpg", "render_2.jpg", "render_10.jpg"]  # a foto real vai na frente; render_10 depois do 2
     server.set_media(1, ["photo_1.jpg", "render_2.jpg"], ["render_1.jpg"])
     assert server.candidates()[0]["images"] == ["photo_1.jpg", "render_2.jpg", "render_10.jpg"]
     assert [m["hidden"] for m in server.candidates()[0]["media"]] == [False, False, True, False]
