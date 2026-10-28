@@ -110,3 +110,45 @@ def test_tese_proposta_pelo_claude_e_editada_na_tela(tmp_path):
     for ruim in (dict(faixa_min="40", faixa_max="30"), dict(faixa_min="abc"), dict(faixa_min="-1")):
         with pytest.raises(ValueError):
             sel.clean_thesis(ruim)
+
+
+def cand(i, titulo, grams=None, dor="", price=30.0, status="new", score=10, similares=()):
+    return dict(id=i, title=titulo, grams=grams, price=price, status=status, score=score, tese=dict(dor=dor, similares=[dict(nome=n) for n in similares]) if dor else None)
+
+
+def test_familias_mesma_dor_peso_parecido_e_variacoes_sugeridas():
+    cs = [cand(1, "Suporte Parede Roteador Modem", 30, dor="prender o roteador na parede", similares=["Prateleira para roteador", "Suporte de modem"]),
+          cand(2, "Suporte Roteador Modem Vertical", 34),
+          cand(3, "Caixa Esconde Fios E Roteador Parede", 200, dor="prender o roteador na parede"),   # mesma dor, mas 6x mais pesado: fica de fora
+          cand(4, "Porta Chaves De Parede", 25),
+          cand(5, "Porta Chaves Parede Com Prateleira", 28),
+          cand(6, "Vaso Geométrico", 90),
+          cand(7, "Suporte Parede Roteador Descartado", 30, status="discarded")]
+    fam = sel.families(cs)
+    assert [f["members"] for f in fam] == [[1, 2], [4, 5]]
+    f = fam[0]
+    assert f["grams"] == [30, 34] and f["pain"] == "prender o roteador na parede" and f["price"]["n"] == 2
+    assert [v["nome"] for v in f["variations"]] == ["Prateleira para roteador"]  # "Suporte de modem" já existe na família (título parecido)
+    assert sel.weight_ok(30, None) and not sel.weight_ok(30, 90) and sel.weight_ok(30, 34)
+
+
+def test_funil_valida_contagens_e_mantem_so_escolhidos():
+    ids = set(range(1, 20))
+    f, w = sel.clean_funnel(dict(lista=[1, 2, 3, 3], escolhidos=[2, 9], decisoes={"2": "mantem", "1": "sai"}), ids)
+    assert f == dict(lista=[1, 2, 3], escolhidos=[2], decisoes={"2": "mantem"}) and len(w) == 2 and "5 a 10" in w[0] and "3 a 5" in w[1]
+    f, w = sel.clean_funnel(dict(lista=list(range(1, 8)), escolhidos=[1, 2, 3]), ids)
+    assert w == []
+    for ruim in (dict(lista=list(range(1, 12))), dict(lista=[99]), dict(lista=list(range(1, 8)), escolhidos=[1, 2, 3, 4, 5, 6])):
+        with pytest.raises(ValueError):
+            sel.clean_funnel(ruim, ids)
+
+
+def test_desempenho_depois_de_publicado_sugere_manter_ou_sair():
+    pts = lambda *p: [dict(ts=t, sold=s) for t, s in p]
+    assert sel.perf_summary(pts(("2026-10-01", 0)), 40, 30)["suggestion"] == "espera"
+    assert sel.perf_summary(pts(("2026-10-01", 0), ("2026-10-08", 5)), 40, 30)["suggestion"] == "espera"  # só 7 dias
+    ok = sel.perf_summary(pts(("2026-10-01", 0), ("2026-10-21", 10)), 40, 30)
+    assert ok["suggestion"] == "mantem" and ok["per_day"] == 0.5 and ok["days"] == 20
+    ruim = sel.perf_summary(pts(("2026-10-01", 0), ("2026-10-21", 10)), 12, 30)
+    assert ruim["suggestion"] == "sai" and "margem" in ruim["why"]  # vende, mas a margem não paga
+    assert sel.perf_summary(pts(("2026-10-01", 3), ("2026-10-21", 3)), 40, 30)["suggestion"] == "sai"  # não vendeu nada

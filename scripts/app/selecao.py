@@ -296,3 +296,90 @@ def clean_thesis(d):
         if nome:
             sim.append(dict(nome=nome, busca=busca or nome))
     return dict(dor=str(d.get("dor", "")).strip()[:300], faixa_min=lo, faixa_max=hi, similares=sim[:10])
+
+
+# ---------- famílias: mesma dor, peso parecido ----------
+def weight_ok(a, b, tol=0.4):
+    """Pesos compatíveis (gramas) a menos de tol de diferença; se um deles é desconhecido, não atrapalha."""
+    return not (a and b) or abs(a - b) / max(a, b) <= tol
+
+
+def families(cands, min_sim=0.34, pain_sim=0.5):
+    """Agrupa candidatos que resolvem a mesma dor: título parecido ou dores parecidas na tese, e peso parecido quando se sabe.
+    cands: [{id, title, status, grams, price, score, tese}]. Devolve famílias com 2 ou mais produtos, as maiores primeiro.
+    Cada uma traz as variações sugeridas: os tipos de produto parecidos da tese que ainda não existem na família."""
+    cs = [c for c in cands if c.get("status") != "discarded"]
+    parent = {c["id"]: c["id"] for c in cs}
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+    for i, a in enumerate(cs):
+        for b in cs[i + 1:]:
+            da, db_ = (a.get("tese") or {}).get("dor", ""), (b.get("tese") or {}).get("dor", "")
+            same = similarity(a["title"], b["title"]) >= min_sim or (da and db_ and similarity(da, db_) >= pain_sim)
+            if same and weight_ok(a.get("grams"), b.get("grams")):
+                parent[find(a["id"])] = find(b["id"])
+    groups = {}
+    for c in cs:
+        groups.setdefault(find(c["id"]), []).append(c)
+    out = []
+    for g in groups.values():
+        if len(g) < 2:
+            continue
+        titles = [c["title"] for c in g]
+        grams = [c["grams"] for c in g if c.get("grams")]
+        sugg, seen = [], []
+        for c in g:
+            for s in (c.get("tese") or {}).get("similares", []):
+                if all(similarity(s["nome"], t) < min_sim for t in titles) and s["nome"] not in seen:
+                    seen.append(s["nome"])
+                    sugg.append(dict(nome=s["nome"], busca=s.get("busca", s["nome"])))
+        pain = next(((c.get("tese") or {}).get("dor") for c in g if (c.get("tese") or {}).get("dor")), "")
+        out.append(dict(id=min(c["id"] for c in g), members=sorted(c["id"] for c in g), titles=titles, pain=pain, grams=[min(grams), max(grams)] if grams else None,
+                        price=price_band([dict(id=c["id"], price=c.get("price")) for c in g]), best_score=max(c.get("score", 0) for c in g), variations=sugg[:6]))
+    return sorted(out, key=lambda f: (-len(f["members"]), -f["best_score"]))
+
+
+# ---------- funil de abrir e fechar ----------
+FUNNEL_OPEN = (5, 10)     # candidatos abertos
+FUNNEL_PICK = (3, 5)      # escolhidos para imprimir a amostra
+
+
+def clean_funnel(d, known_ids):
+    """Valida o funil vindo da tela: ids conhecidos, escolhidos dentro dos abertos, no máximo 10 e 5. Devolve (funil, avisos de contagem)."""
+    lista = list(dict.fromkeys(int(i) for i in d.get("lista", [])))
+    esc = [i for i in dict.fromkeys(int(i) for i in d.get("escolhidos", [])) if i in lista]
+    if any(i not in known_ids for i in lista):
+        raise ValueError("produto desconhecido na lista")
+    if len(lista) > FUNNEL_OPEN[1]:
+        raise ValueError(f"a lista aberta aceita no máximo {FUNNEL_OPEN[1]} candidatos")
+    if len(esc) > FUNNEL_PICK[1]:
+        raise ValueError(f"escolha no máximo {FUNNEL_PICK[1]} para a amostra")
+    dec = {str(k): v for k, v in (d.get("decisoes") or {}).items() if v in ("mantem", "sai") and int(k) in esc}
+    warn = []
+    if lista and len(lista) < FUNNEL_OPEN[0]:
+        warn.append(f"abra de {FUNNEL_OPEN[0]} a {FUNNEL_OPEN[1]} candidatos (tem {len(lista)})")
+    if esc and len(esc) < FUNNEL_PICK[0]:
+        warn.append(f"escolha de {FUNNEL_PICK[0]} a {FUNNEL_PICK[1]} para a amostra (tem {len(esc)})")
+    return dict(lista=lista, escolhidos=esc, decisoes=dec), warn
+
+
+def perf_summary(points, margin_pct, target_pct, min_days=14, min_per_day=0.2):
+    """Desempenho depois de publicado. points: [{ts 'AAAA-MM-DD...', sold}] (vendas acumuladas do anúncio). Sugere mantém / sai / espera:
+    com pelo menos min_days de venda, mantém se vende e a margem está na meta; sai se não vende ou se a margem fica abaixo da meta."""
+    pts = sorted((p for p in points if p.get("ts") and p.get("sold") is not None), key=lambda p: p["ts"])
+    if len(pts) < 2:
+        return dict(days=0, sold=pts[-1]["sold"] if pts else None, per_day=None, suggestion="espera", why="faltam leituras de vendas (precisa de pelo menos duas)")
+    d0, d1 = datetime.fromisoformat(pts[0]["ts"][:10]).date(), datetime.fromisoformat(pts[-1]["ts"][:10]).date()
+    days, sold = (d1 - d0).days, pts[-1]["sold"] - pts[0]["sold"]
+    per_day = round(sold / days, 2) if days else None
+    if days < min_days:
+        return dict(days=days, sold=sold, per_day=per_day, suggestion="espera", why=f"só {days} dias de venda; espere {min_days}")
+    if margin_pct is not None and margin_pct < target_pct:
+        return dict(days=days, sold=sold, per_day=per_day, suggestion="sai", why=f"margem de {margin_pct:g}% abaixo da meta de {target_pct:g}%")
+    if (per_day or 0) < min_per_day:
+        return dict(days=days, sold=sold, per_day=per_day, suggestion="sai", why=f"{per_day} vendas por dia, abaixo de {min_per_day:g}")
+    return dict(days=days, sold=sold, per_day=per_day, suggestion="mantem", why="vende e dá a margem esperada")
