@@ -90,11 +90,12 @@ const VIEWS = {
       <div class="card"><h2>Custos e taxas</h2>
         <p class="small mut" style="margin-top:0">Valores provisórios (estimativas). A margem de cada produto usa estes números; marque “confirmado” quando forem os reais.</p>
         <div class="form" id="cform"></div></div>
+      <div class="card" id="perfcard"></div>
       <div class="card" id="selconf"></div>
       <div class="card"><h2>Dados da loja (usados no texto dos anúncios)</h2><div class="form" id="bform"></div></div>
       <div class="card"><h2>Conta do Mercado Livre</h2><p id="mlst" class="small mut" style="margin-top:0"></p><div class="form" id="mlcfg"></div></div>`,
     bind: async () => {
-      SEL.bindConfig();
+      SEL.bindConfig(); PERFIS.bind();
       const {values, labels} = await (await fetch('/api/costs')).json();
       $('cform').innerHTML = Object.keys(labels).map(k => `<label>${esc(labels[k])}<input type="number" step="0.01" min="0" data-k="${k}" value="${values[k]}"></label>`).join('') +
         `<label class="row" style="flex-direction:row;gap:8px;color:var(--fg);font-size:14px"><input type="checkbox" id="cconf" ${values.confirmado ? 'checked' : ''}> Estes são os custos reais (confirmado)</label>

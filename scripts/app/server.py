@@ -28,6 +28,7 @@ import slice as fatiar  # noqa: E402
 import video as videos  # noqa: E402
 import identity  # noqa: E402
 import polyhaven  # noqa: E402
+import perfis  # noqa: E402
 import selecao  # noqa: E402
 import texto  # noqa: E402  (scripts/app/slice.py; mesmo diretório do server.py)
 from classify import score  # noqa: E402
@@ -1265,6 +1266,8 @@ class H(BaseHTTPRequestHandler):
             return self._json(dict(values=get_costs(), labels=custos.LABELS))
         if path == "/api/filtros":
             return self._json(dict(values=get_filters(), labels=selecao.LABELS))
+        if path == "/api/perfis":
+            return self._json(dict(app=perfis.app_profiles(), chrome=perfis.system_profiles(), servicos={k: v[0] for k, v in perfis.SERVICES.items()}, prefixo=perfis.PREFIX))
         if path == "/api/selecao":
             return self._json(selecao_overview())
         if path == "/api/similares":
@@ -1442,6 +1445,12 @@ class H(BaseHTTPRequestHandler):
                 c.execute("UPDATE steps SET status='running' WHERE listing_id=? AND name='copy'", (data["id"],))
             threading.Thread(target=run_copy, args=(data["id"],), daemon=True).start()
             return self._json(dict(ok=True))
+        if path == "/api/perfis/adicionar":
+            try:
+                nome = perfis.add_profile(data.get("apelido"), data.get("servico"))
+            except (ValueError, TypeError) as e:
+                return self._json(dict(error=str(e)), 400)
+            return self._json(dict(ok=True, perfil=nome))
         if path == "/api/filtros":
             try:
                 put_setting("filters", selecao.clean_filters(data))
