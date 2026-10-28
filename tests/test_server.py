@@ -264,3 +264,21 @@ def test_perfil_padrao_e_info_do_modelo(tmp_path, monkeypatch):
     server.set_model_meta(1, "https://www.printables.com/model/1", "ok", server.model_info(dict(thumb="http://x/a.jpg", author="Ana", q="chaves", downloads=5)))
     (cand,) = server.candidates()
     assert cand["model"]["info"] == dict(thumb="", author="Ana", query="chaves", file_size=None, model_id="", downloads=5, likes=None)  # thumb só https
+
+
+def test_comparacao_de_identidade_na_busca(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "DB", tmp_path / "t.sqlite")
+    monkeypatch.setattr(server, "IMAGES", tmp_path)
+    server.init()
+    with server.db() as c:
+        c.execute("INSERT INTO listings(id,store_id,url,title) VALUES(7,1,'https://x','Porta chaves')")
+    job = dict(results=[dict(id="1", title="a", source="makerworld")], notes=[], msg="1 modelos encontrados", q="q")
+    server.compare_with_ad(7, job)  # sem a foto do anúncio guardada: só avisa, não quebra a busca
+    assert job["verdict"] is None and "sem a foto" in job["notes"][0]
+    (tmp_path / "7.img").write_bytes(b"x")
+    monkeypatch.setattr(server.identity, "score_candidates", lambda title, imgs, results: (None, "sem_identico"))
+    server.compare_with_ad(7, job)
+    assert job["verdict"] == "sem_identico" and "nenhum modelo parece idêntico" in job["notes"][-1]
+    monkeypatch.setattr(server.identity, "score_candidates", lambda *a: (_ for _ in ()).throw(ValueError("sem Claude")))
+    server.compare_with_ad(7, job)
+    assert job["verdict"] is None and "indisponível" in job["notes"][-1]

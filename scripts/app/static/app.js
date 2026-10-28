@@ -271,7 +271,8 @@ const VIEWS = {
           toast(r.error || 'Chrome aberto: clique em Baixar na página do modelo'); if (!r.error) pollModel(id()); } };
       $('vup').onclick = () => { const f = $('vfile').files[0]; if (!f) return toast('Escolha o arquivo de áudio');
         fetch(`/api/voice/upload?id=${id()}&name=${encodeURIComponent(f.name)}`, {method:'POST', body:f}).then(r => r.json()).then(r => { toast(r.error || 'Áudio enviado. Gere o vídeo de novo.'); load(); }); };
-      $('vgo').onclick = async () => { const sv = await post('/api/media/config', {video: cfgRead('v', VID_FIELDS)}); if (sv.error) return toast(sv.error);
+      $('vgo').onclick = async () => { const vc = cfgRead('v', VID_FIELDS);
+        if (vc.motion === 'camera' && vc.engine === 'cycles' && !confirm(($('vest').textContent.match(/Tempo estimado: [^(]*/) || ['Vai demorar horas'])[0] + '. Renderizar o vídeo em Cycles mesmo assim?')) return; const sv = await post('/api/media/config', {video: cfgRead('v', VID_FIELDS)}); if (sv.error) return toast(sv.error);
         const r = await post('/api/video', {id: id()}); toast(r.error || 'Gerando o vídeo…'); load(); };
       $('shdone').onclick = async () => { const r = await post('/api/shopee/done', {id: id(), url: $('shurl').value}); toast(r.error || 'Marcado como publicado'); load(); };
       $('mlsearch').onclick = async () => { const r = await (await fetch('/api/ml/categories?q=' + encodeURIComponent($('mlq').value))).json();
@@ -288,7 +289,12 @@ const VIEWS = {
       $('kok').onclick = async () => { const r = await post('/api/kit/confirm', {id: id()}); toast(r.error || 'Kit confirmado'); load(); };
       document.querySelectorAll('[data-pv]').forEach(b => b.onclick = () => { pv = b.dataset.pv; document.querySelectorAll('[data-pv]').forEach(x => x.setAttribute('aria-pressed', x === b)); update(); });
       $('icfg').innerHTML = presetBar('i', IMG_PRESETS) + cfgHtml('i', IMG_FIELDS) + '<fieldset class="views"><legend>Vistas (cada uma vira uma imagem)</legend><div id="iviews"></div></fieldset>';
-      $('vcfg').innerHTML = presetBar('v', VID_PRESETS) + cfgHtml('v', VID_FIELDS);
+      $('vcfg').innerHTML = presetBar('v', VID_PRESETS) + cfgHtml('v', VID_FIELDS) + '<p id="vest" class="small" style="margin:8px 0 0"></p>';
+      const vestimate = async () => { const c = cfgRead('v', VID_FIELDS); const el = $('vest'); if (!el) return;
+        if (c.motion !== 'camera') { el.textContent = ''; return; }
+        const r = await (await fetch(`/api/video/estimate?id=${id()}&engine=${c.engine}&fps=${c.fps}&clip_seconds=${c.clip_seconds}`)).json();
+        el.innerHTML = r.error ? esc(r.error) : `<b>Tempo estimado: ${esc(r.text)}</b> (${r.frames} quadros, cerca de ${r.spf} s cada${r.measured ? ', medido neste computador' : ', estimativa padrão'}).${c.engine === 'cycles' ? ' <span style="color:var(--red)">O Cycles deixa o computador pesado por esse tempo todo.</span>' : ''}`; };
+      $('vcfg').addEventListener('change', vestimate); vestimate();
       const applyPreset = (pre, fields, list, e) => { const b = e.target.closest(`[data-${pre}preset]`); if (!b) return; const p = list.find(x => x.k === b.dataset[pre + 'preset']);
         cfgFill(pre, fields, {...cfgRead(pre, fields), ...p.c}); if (p.c.views) document.querySelectorAll('[data-iview]').forEach(x => x.checked = p.c.views.includes(x.dataset.iview)); toast('Sugestão aplicada: ' + p.l + '. Clique em Gerar para usar.'); };
       $('icfg').onclick = e => applyPreset('i', IMG_FIELDS, IMG_PRESETS, e); $('vcfg').onclick = e => applyPreset('v', VID_FIELDS, VID_PRESETS, e);
@@ -541,6 +547,9 @@ const IMG_FIELDS = [
 const VID_FIELDS = [
   {k:'format', l:'Formato', t:'select', o:{'9:16':'Vertical 9:16 (Reels, TikTok, Shopee)', '1:1':'Quadrado 1:1', '16:9':'Horizontal 16:9'}},
   {k:'seconds', l:'Segundos por imagem (sem voz)', t:'number', min:1, max:10, step:0.5},
+  {k:'motion', l:'Movimento do vídeo', t:'select', o:{imagens:'Imagens em sequência', camera:'Câmera em movimento na sala (renderiza no Blender)'}},
+  {k:'engine', l:'Render do vídeo com câmera', t:'select', o:{eevee:'EEVEE (rápido, alguns minutos)', cycles:'Cycles (mais realista, leva horas)'}},
+  {k:'clip_seconds', l:'Duração do vídeo com câmera (s)', t:'number', min:4, max:30, step:1},
   {k:'transition', l:'Transição', t:'select', o:{none:'Corte seco', fade:'Esmaecer'}},
   {k:'zoom', l:'Zoom lento nas imagens', t:'check'},
   {k:'captions', l:'Mostrar legenda do roteiro', t:'check'},
@@ -552,7 +561,8 @@ const VID_FIELDS = [
   {k:'music', l:'Usar a música de fundo enviada', t:'check'},
   {k:'music_volume', l:'Volume da música (0 a 1)', t:'number', min:0, max:1, step:0.05},
   {k:'fps', l:'Quadros por segundo', t:'select', o:{24:'24 (cinema)', 30:'30 (padrão)', 60:'60 (fluido)'}},
-  {k:'contexto', l:'Cenário das vistas "em uso"', t:'select', o:{auto:'Automático (pelo título)', parede:'Parede', mesa:'Mesa de madeira'}},
+  {k:'ambiente', l:'Ambiente das vistas "em uso"', t:'select', o:{auto:'Automático (pelo produto)', sala:'Sala', entrada:'Entrada / corredor', escritorio:'Escritório'}},
+  {k:'contexto', l:'Cenário simples (sem os ativos do Poly Haven)', t:'select', o:{auto:'Automático (pelo título)', parede:'Parede', mesa:'Mesa de madeira'}},
   {k:'quality', l:'Qualidade do arquivo', t:'select', o:{rapido:'Rápida (arquivo menor)', normal:'Normal', alta:'Alta (maior)'}}];
 
 const HINTS = {
@@ -565,7 +575,7 @@ const HINTS = {
   caption_pos: 'Embaixo evita cobrir a peça.', caption_color: 'Escuro no fundo claro; claro com a caixa escura.', caption_box: 'A caixa dá leitura em qualquer fundo.',
   background_v: '', music: 'Envie uma música livre de direitos antes.', music_volume: '0,15 a 0,3 deixa a voz clara.', fps: '30 é o padrão; 24 dá aspecto de cinema e arquivo menor.', quality_v: 'Alta gera arquivo maior.'};
 const IMG_PRESETS = [
-  {k:'ml', l:'Mercado Livre (foto principal)', d:'Fundo branco puro, peça perto, luz normal: o padrão que o ML aceita.', c:{background:'white', finish:'matte', light:'normal', fill:'perto', shadow:true, quality:'normal', turn:0, views:['frente','uso','uso_perto','lado']}},
+  {k:'ml', l:'Mercado Livre (foto principal)', d:'Fundo branco puro, peça perto, luz normal: o padrão que o ML aceita.', c:{background:'white', finish:'matte', light:'normal', fill:'perto', shadow:true, quality:'normal', turn:0, views:['frente','uso_perto','uso','uso_medio','uso_aberto']}},
   {k:'vitrine', l:'Vitrine (cinza suave)', d:'Fundo cinza claro e luz suave, 4 vistas. Bom para o carrossel.', c:{background:'gray', finish:'matte', light:'soft', fill:'medio', shadow:true, quality:'normal', turn:0, views:['frente','lado','cima','tras']}},
   {k:'destaque', l:'Destaque (brilho e detalhe)', d:'Acabamento seda, luz forte e um detalhe em zoom. Chama atenção no feed.', c:{background:'warm', finish:'silk', light:'strong', fill:'perto', shadow:true, quality:'alta', turn:0, views:['frente','detalhe','topo']}},
   {k:'teste', l:'Teste rápido', d:'Qualidade rápida e 2 vistas, para conferir o enquadramento em cerca de 1 min.', c:{quality:'rapido', size:800, views:['frente','topo']}}];
@@ -591,8 +601,9 @@ async function pollModel(lid) {
     const cur = (S.candidates.find(x => String(x.id) === String(route[1])) || {}).model || {};
     if (!$('mshow').dataset.init && MJOB.headless != null) { $('mshow').checked = !MJOB.headless; $('mshow').dataset.init = 1; }
     if (MJOB.q && !$('msq').dataset.q) { $('msq').dataset.q = 1; $('msq').value = MJOB.q; }
-    $('msres').innerHTML = (MJOB.q && (MJOB.results || []).length ? `<div class="small mut" style="margin:4px 0">Resultados de “${esc(MJOB.q)}”${MJOB.headless ? ' (navegador oculto)' : ' (navegador visível)'}. Escolha outro para trocar o modelo.</div>` : '') + (MJOB.results || []).map((r, i) => `<div class="mr ${cur.source_url && r.url === cur.source_url ? 'cur' : ''}"><img class="thumb" src="${esc(r.thumb)}" alt="" loading="lazy" referrerpolicy="no-referrer">
+    $('msres').innerHTML = (MJOB.q && (MJOB.results || []).length ? `<div class="small mut" style="margin:4px 0">Resultados de “${esc(MJOB.q)}”${MJOB.headless ? ' (navegador oculto)' : ' (navegador visível)'}. Escolha outro para trocar o modelo.</div>` : '') + (MJOB.desc ? `<div class="small mut" style="margin:6px 0">Pela foto do anúncio: ${esc(MJOB.desc)} Termos buscados: ${esc((MJOB.terms || []).join(', '))}.</div>` : '') + (MJOB.verdict ? `<div class="small" style="margin:6px 0"><b>${MJOB.verdict === 'identico' ? 'Achei um modelo idêntico ao anúncio' : 'Nenhum modelo idêntico ao anúncio'}</b>: ${MJOB.verdict === 'identico' ? 'confira a nota e a licença antes de usar.' : 'escolha o mais parecido à mão ou envie o seu STL no cartão abaixo.'}</div>` : '') + (MJOB.results || []).map((r, i) => `<div class="mr ${cur.source_url && r.url === cur.source_url ? 'cur' : ''}">${r.identity ? `<img class="thumb" src="/images/${esc(route[1])}" alt="foto do anúncio" title="Foto do anúncio">` : ''}<img class="thumb" src="${esc(r.thumb)}" alt="" loading="lazy" referrerpolicy="no-referrer">
       <div class="grow"><a class="title wrap" href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.title)}</a>${cur.source_url && r.url === cur.source_url ? ' <span class="chip ok">Em uso</span>' : ''} <button class="sm ghost" data-open="${esc(r.url)}">Abrir</button>
+        ${r.identity ? `<div class="small"><span class="chip ${r.identity.score >= 85 ? 'ok' : r.identity.score >= 60 ? '' : 'error'}">Identidade ${r.identity.score}/100${MJOB.best === i && MJOB.verdict === 'identico' ? ' · melhor' : ''}</span> ${esc(r.identity.reason)}</div>` : ''}
         <div class="meta"><span class="chip">${SRC[r.source] || esc(r.source)}</span>${r.author ? `<span>${esc(r.author)}</span>` : ''}${r.downloads != null ? `<span><b>${num(r.downloads)}</b> downloads</span>` : ''}
           ${r.license ? `<span class="chip ${r.commercial === false ? 'error' : r.commercial ? 'ok' : ''}" title="${esc(r.license)}">${r.commercial === false ? 'Sem uso comercial' : r.commercial ? 'Uso comercial ok' : 'Veja a licença'}</span>` : ''}</div>
         <div id="mf${i}" class="small"></div></div>
