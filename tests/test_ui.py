@@ -152,7 +152,7 @@ def test_producao_busca_modelo_imagens_e_configuracao(gui):
         page.wait_for_selector("#igal .gi >> nth=1")
         assert "Passo 1" in page.inner_text(".next")  # sem modelo, o passo é achar o modelo
         assert page.input_value("#msq").startswith("Suporte articulado")
-        assert page.input_value("[data-i=finish]") == "matte" and page.locator("[data-iview]:checked").count() == 4
+        assert page.input_value("[data-i=finish]") == "matte" and page.locator("[data-iview]:checked").count() == 5
         assert page.input_value("[data-v=format]") == "9:16"
         page.click("#igal [data-g=right] >> nth=0")  # primeira imagem vai para depois
         page.wait_for_function("document.querySelector('#igal img').alt === 'render_2.jpg'")

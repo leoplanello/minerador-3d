@@ -83,3 +83,27 @@ def test_legenda_longa_cabe_no_espaco_abaixo_da_imagem():
     texto, fs = video.fit_caption(longa, 1080, 1920 * 0.2, 60)
     assert len(texto.splitlines()) * fs * 1.3 <= 1920 * 0.2 and fs < 60 and max(map(len, texto.splitlines())) * 0.52 * fs <= 1080 * 0.9
     assert chr(13) not in texto
+
+
+def test_estimativa_do_video_com_camera():
+    e = video.estimate(dict(engine="cycles", clip_seconds=10, fps=24))
+    assert e["frames"] == 240 and e["seconds"] == round(240 * video.SPF_DEFAULT["cycles"]) and "h" in e["text"] and not e["measured"]
+    m = video.estimate(dict(engine="eevee", clip_seconds=10, fps=30), spf=2.0)
+    assert m["frames"] == 300 and m["seconds"] == 600 and m["text"] == "10 min" and m["measured"]
+    assert video.estimate(dict(clip_seconds=10, fps=24), voice_seconds=20)["frames"] == 480  # com voz, a duração é a da voz
+    for bad in ({"clip_seconds": 2}, {"clip_seconds": 99}, {"engine": "unreal"}, {"motion": "x"}):
+        with pytest.raises(ValueError):
+            video.clean_video_cfg(bad)
+    assert video.human_time(6000) == "1 h 40 min"
+
+
+@pytest.mark.skipif(not video.FFMPEG.exists(), reason="ffmpeg ausente")
+def test_video_com_camera_monta_dos_quadros(tmp_path):
+    from PIL import Image
+    frames = []
+    for i in range(1, 13):
+        Image.new("RGB", (1080, 1920), (20 * i, 80, 120)).save(tmp_path / f"render_{i}.jpg")
+        frames.append(tmp_path / f"render_{i}.jpg")
+    out = video.make_camera_video(frames, "Primeira frase do roteiro. Segunda frase do roteiro.", tmp_path / "v.mp4", cfg=dict(fps=24, clip_seconds=4))
+    info = subprocess.run([str(video.FFPROBE), "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height,nb_frames", "-of", "csv=p=0", str(out)], capture_output=True, text=True).stdout.strip()
+    assert info.startswith("1080,1920,12")

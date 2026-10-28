@@ -1,8 +1,10 @@
 """Gera as fotos do anúncio a partir do modelo 3D usando o Blender portátil (tools/blender)."""
 import json
 import re
+import polyhaven
 import proc
 import tempfile
+import time
 import zipfile
 from pathlib import Path
 from xml.etree import ElementTree as ET
@@ -56,15 +58,15 @@ def whiten(path):
 # ângulo (azimute, elevação, zoom da câmera) de cada vista que dá para pedir
 VIEWS = {"frente": (35, 28, 1.0), "lado": (125, 22, 1.0), "cima": (-50, 55, 1.0), "tras": (215, 25, 1.0),
          "frontal": (0, 12, 1.0), "topo": (0, 88, 1.0), "perfil": (90, 5, 1.0), "detalhe": (35, 20, 0.6),
-         "uso": (28, 10, 1.0), "uso_perto": (-24, 6, 0.6)}  # "uso*": a peça instalada no cenário (parede ou mesa)
+         "uso": (26, 10, 1.0), "uso_perto": (-34, 12, 0.6), "uso_medio": (-22, 9, 1.0), "uso_aberto": (32, 12, 1.0)}  # "uso*": a peça instalada no cenário (parede ou mesa)
 VIEW_LABELS = {"frente": "Frente 3/4", "lado": "Lado", "cima": "De cima", "tras": "Trás 3/4", "frontal": "Frontal", "topo": "Topo", "perfil": "Perfil", "detalhe": "Detalhe (zoom)",
-               "uso": "Em uso (cenário)", "uso_perto": "Em uso, de perto"}
+               "uso": "Em uso (com o objeto)", "uso_perto": "Em uso, detalhe de perto", "uso_medio": "Ambiente médio", "uso_aberto": "Ambiente aberto"}
 QUALITY = {"rapido": (16, 12), "normal": (32, 24), "alta": (64, 64)}  # amostras EEVEE, Cycles
 FILL = {"perto": 2.4, "medio": 3.2, "longe": 3.8}  # distância da câmera em tamanhos da peça: quanto menor, mais a peça enche a imagem
-RENDER_DEFAULT = dict(color="#3a3a3a", finish="matte", background="white", views=["frente", "uso", "uso_perto", "lado"], size=1200,
-                      quality="normal", light="normal", shadow=True, fill="medio", turn=0, contexto="auto")
+RENDER_DEFAULT = dict(color="#3a3a3a", finish="matte", background="white", views=["frente", "uso_perto", "uso", "uso_medio", "uso_aberto"], size=1200,
+                      quality="normal", light="normal", shadow=True, fill="medio", turn=0, contexto="auto", ambiente="auto")
 WALL_WORDS = ("parede", "wall", "suporte", "porta-", "porta ", "prateleira", "gancho", "cabide", "organizador")  # o que se instala na parede
-CHOICES = dict(finish=("matte", "gloss", "silk"), background=("white", "gray", "warm"), quality=tuple(QUALITY), light=("soft", "normal", "strong"), fill=tuple(FILL), contexto=("auto", "parede", "mesa"))
+CHOICES = dict(finish=("matte", "gloss", "silk"), background=("white", "gray", "warm"), quality=tuple(QUALITY), light=("soft", "normal", "strong"), fill=tuple(FILL), contexto=("auto", "parede", "mesa"), ambiente=("auto", "sala", "entrada", "escritorio"))
 
 
 def clean_render_cfg(d):
@@ -87,6 +89,43 @@ def clean_render_cfg(d):
     return cfg | dict(views=views, size=size, shadow=bool(cfg["shadow"]), turn=turn)
 
 
+PROPS = {"chaves": ("chave", "chaveiro", "key"), "modem": ("roteador", "modem", "router")}  # objeto que a peça segura ou sustenta, pelo título; o modem é um bloco em escala, com a peça de cada lado
+
+
+def prop_for(title):
+    t = title.lower()
+    return next((k for k, words in PROPS.items() if any(w in t for w in words)), "")
+
+
+ROOM_WORDS = {"entrada": ("chave", "chaveiro", "corredor", "entrada", "casaco", "guarda-chuva", "bolsa"),
+              "escritorio": ("roteador", "modem", "cabo", "fone", "monitor", "notebook", "celular", "caneta", "headset", "mouse")}  # o resto vai para a sala
+
+
+def room_for(cfg, title=""):
+    """Ambiente das vistas 'em uso' (polyhaven.ROOMS): o escolhido na tela ou, no automático, pelo tipo de produto no título."""
+    if cfg["ambiente"] != "auto":
+        return cfg["ambiente"]
+    t = title.lower()
+    return next((r for r, words in ROOM_WORDS.items() if any(w in t for w in words)), "sala")
+
+
+def room_cfg(cfg, title):
+    """O que o Blender precisa da sala: o ambiente, o objeto que acompanha a peça e como a peça é montada (fixada na parede ou aparelho em pé sobre o móvel)."""
+    obj = prop_for(title)
+    return dict(sala=polyhaven.ROOMS[room_for(cfg, title)], objeto=obj, montagem="sobre_movel" if obj == "modem" else "parede_alta")
+
+
+def finish_photo(path):
+    """Vinheta leve e um pouco de grão nas fotos 'em uso': tira o ar de render limpo demais."""
+    from PIL import Image, ImageChops
+    im = Image.open(path).convert("RGB")
+    w, h = im.size
+    vig = Image.radial_gradient("L").resize((w, h)).point(lambda v: 255 - int(0.30 * v))
+    im = ImageChops.multiply(im, Image.merge("RGB", (vig,) * 3))
+    im = ImageChops.add(im, Image.effect_noise((w, h), 5).convert("RGB"), 1, -128)
+    im.save(path, quality=93)
+
+
 def scene_for(cfg, title=""):
     """Cenário das vistas 'em uso': o escolhido na tela ou, no automático, parede quando o título fala de parede/suporte, senão mesa."""
     if cfg["contexto"] != "auto":
@@ -105,7 +144,7 @@ def render_images(model, outdir, cfg=None, title=""):
     for old in outdir.glob("render_*.jpg"):
         old.unlink()
     with tempfile.TemporaryDirectory() as tmp:
-        scene_cfg = cfg | dict(views=[(v, *VIEWS[v]) for v in cfg["views"]], contexto=scene_for(cfg, title), samples_eevee=QUALITY[cfg["quality"]][0], samples_cycles=QUALITY[cfg["quality"]][1], dist=FILL[cfg["fill"]])
+        scene_cfg = cfg | dict(polyhaven=str(polyhaven.ROOT) if polyhaven.available() else "", views=[(v, *VIEWS[v]) for v in cfg["views"]], contexto=scene_for(cfg, title), **room_cfg(cfg, title), samples_eevee=QUALITY[cfg["quality"]][0], samples_cycles=QUALITY[cfg["quality"]][1], dist=FILL[cfg["fill"]])
         cfgfile = Path(tmp) / "cfg.json"
         cfgfile.write_text(json.dumps(scene_cfg), encoding="utf-8")
         stl = Path(model)
@@ -125,6 +164,53 @@ def render_images(model, outdir, cfg=None, title=""):
                     for f, v in zip(files, cfg["views"]):
                         if not v.startswith("uso"):  # o cenário em uso mantém a cor do ambiente
                             whiten(f)
+                for f, v in zip(files, cfg["views"]):
+                    if v.startswith("uso"):
+                        finish_photo(f)
                 return files
             err = (r.stderr or r.stdout)[-300:]
     raise ValueError(f"o Blender não gerou as imagens: {err}")
+
+
+def camera_path(n):
+    """Trajetória do vídeo: n quadros (az, el, t) com a câmera abrindo na sala e fechando na peça, suavizada no começo e no fim (smoothstep)."""
+    out = []
+    for i in range(n):
+        x = i / max(n - 1, 1)
+        t = x * x * (3 - 2 * x)
+        out.append((28 + (-24 - 28) * t, 10 + (6 - 10) * t, t))
+    return out
+
+
+def render_frames(model, outdir, n, engine="EEVEE", res=(1080, 1920), title="", cfg=None, on_time=lambda spf: None, timeout=6 * 3600):
+    """Quadros do vídeo em outdir/render_1.jpg... (câmera em movimento no cenário 'em uso'). engine: 'EEVEE' (rápido) ou 'CYCLES' (demora horas).
+    on_time recebe os segundos por quadro medidos, para a estimativa da próxima vez. Devolve os caminhos em ordem."""
+    if not BLENDER.exists():
+        raise ValueError("Blender não encontrado em tools/blender")
+    cfg = clean_render_cfg(dict(cfg or {}, views=["uso"]))
+    outdir.mkdir(parents=True, exist_ok=True)
+    for old in outdir.glob("render_*.jpg"):
+        old.unlink()
+    with tempfile.TemporaryDirectory() as tmp:
+        scene_cfg = cfg | dict(polyhaven=str(polyhaven.ROOT) if polyhaven.available() else "", contexto=scene_for(cfg, title), **room_cfg(cfg, title), still_cycles=False, res=list(res),
+                               views=[("uso", az, el, 1.0, t) for az, el, t in camera_path(n)], samples_eevee=QUALITY[cfg["quality"]][0],
+                               samples_cycles=QUALITY[cfg["quality"]][1], dist=FILL[cfg["fill"]])
+        cfgfile = Path(tmp) / "cfg.json"
+        cfgfile.write_text(json.dumps(scene_cfg), encoding="utf-8")
+        stl = Path(model)
+        if stl.suffix.lower() == ".3mf":
+            stl = Path(tmp) / "modelo.stl"
+            threemf_to_stl(model, stl)
+        err = ""
+        for eng in ((engine,) if engine == "CYCLES" else ("EEVEE", "CYCLES")):
+            t0 = time.time()
+            try:
+                r = proc.run([str(BLENDER), "-b", "-P", str(SCENE), "--", str(stl), str(outdir), str(cfgfile), eng], capture_output=True, text=True, timeout=timeout)
+            except proc.TimeoutExpired:
+                raise ValueError("a geração dos quadros do vídeo passou do tempo limite")
+            files = [outdir / f"render_{i}.jpg" for i in range(1, n + 1)]
+            if all(f.is_file() for f in files):
+                on_time((time.time() - t0) / n)
+                return files
+            err = (r.stderr or r.stdout)[-300:]
+    raise ValueError(f"o Blender não gerou os quadros do vídeo: {err}")

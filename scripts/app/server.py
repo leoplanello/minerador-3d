@@ -26,6 +26,8 @@ import ml  # noqa: E402
 import render as renderizar  # noqa: E402
 import slice as fatiar  # noqa: E402
 import video as videos  # noqa: E402
+import identity  # noqa: E402
+import polyhaven  # noqa: E402
 import selecao  # noqa: E402
 import texto  # noqa: E402  (scripts/app/slice.py; mesmo diretório do server.py)
 from classify import score  # noqa: E402
@@ -413,6 +415,18 @@ def set_voice(lid, name, data):
     (d / f"voz{ext}").write_bytes(data)
 
 
+def video_estimate(cfg, voice=None):
+    """Quadros e tempo do vídeo com câmera. Usa os segundos por quadro medidos neste computador na última vez; sem medição, o padrão do motor."""
+    spf = get_setting("spf:" + cfg["engine"])
+    secs = None
+    if voice:
+        try:
+            secs = min(max(videos.duration(voice), 4), 30)
+        except (ValueError, OSError):
+            pass
+    return videos.estimate(cfg, spf if isinstance(spf, (int, float)) else None, secs)
+
+
 def run_video(lid):
     def step(status, msg=""):
         with lock, db() as c:
@@ -426,8 +440,21 @@ def run_video(lid):
         kit = PRODUCTS / str(lid) / "kit"
         voice = next(iter(sorted(kit.glob("voz.*"))), None)
         music = next(iter(sorted(kit.glob("musica.*"))), None)
-        videos.make_video([PRODUCTS / str(lid) / "renders" / n for n in cand["images"]], (cand["kit"]["scripts"] or [cand["kit"]["title"]])[0],
-                          kit / "video.mp4", voice, cfg=video_cfg(), music=music)
+        cfg, script = video_cfg(), (cand["kit"]["scripts"] or [cand["kit"]["title"]])[0]
+        if cfg["motion"] == "camera":
+            est = video_estimate(cfg, voice)
+            step("running", f"Renderizando {est['frames']} quadros no Blender ({cfg['engine'].upper()}): cerca de {est['text']}")
+            with db() as c:
+                m = c.execute("SELECT m.file_path FROM models m WHERE m.listing_id=?", (lid,)).fetchone()
+            if not m or not m["file_path"]:
+                raise ValueError("envie o modelo 3D antes do vídeo com câmera")
+            W, H = videos.FORMATS[cfg["format"]]
+            with render_lock:
+                frames = renderizar.render_frames(ROOT / m["file_path"], PRODUCTS / str(lid) / "frames", est["frames"], engine=cfg["engine"].upper(), res=(W, H),
+                                                  title=cand["title"] or "", cfg=render_cfg(), on_time=lambda s: put_setting("spf:" + cfg["engine"], round(s, 2)))
+            videos.make_camera_video(frames, script, kit / "video.mp4", voice, cfg=cfg, music=music)
+        else:
+            videos.make_video([PRODUCTS / str(lid) / "renders" / n for n in cand["images"]], script, kit / "video.mp4", voice, cfg=cfg, music=music)
         step("ok", "com a sua voz" if voice else "sem voz: grave o roteiro, envie o áudio e gere de novo")
     except Exception as e:  # erro fica visível no card da GUI
         step("error", str(e)[:300])
@@ -448,6 +475,10 @@ def run_images(lid, cfg):
                 m = c.execute("SELECT m.file_path, l.title FROM models m JOIN listings l ON l.id=m.listing_id WHERE m.listing_id=?", (lid,)).fetchone()
             if not m or not m["file_path"]:
                 raise ValueError("envie o modelo 3D antes de gerar as imagens")
+            try:
+                polyhaven.ensure()  # sala com ativos CC0 (uns 12 MB, baixados uma vez); sem rede, o Blender usa o cenário simples
+            except Exception:
+                pass
             renderizar.render_images(ROOT / m["file_path"], PRODUCTS / str(lid) / "renders", cfg, title=m["title"] or "")
             step("ok")
     except Exception as e:  # erro fica visível no card da GUI
@@ -542,21 +573,44 @@ def browser_headless():
 model_headless = browser_headless
 
 
-def run_model_search(lid, q, profile, sites, headless=None):
+def expand_terms(lid, q, job):
+    """Termos de busca: o digitado mais os tirados da FOTO do anúncio pelo Claude (o título em português nem sempre acha o modelo nos sites em inglês)."""
+    photo = IMAGES / f"{lid}.img"
+    if not photo.is_file():
+        return [q]
+    with db() as c:
+        row = c.execute("SELECT title FROM listings WHERE id=?", (lid,)).fetchone()
+    job["msg"] = "Lendo a foto do anúncio para ampliar os termos de busca…"
+    try:
+        vis = identity.visual_terms(row["title"] if row else q, photo)
+    except ValueError as e:
+        job["notes"].append("termos pela foto indisponíveis: " + str(e)[:120])
+        return [q]
+    job["desc"] = vis["descricao"]
+    return list(dict.fromkeys([q] + vis["termos"]))[:6]
+
+
+def run_model_search(lid, q, profile, sites, headless=None, expand=True):
     headless = model_headless() if headless is None else headless
     job = MODEL_JOBS[lid] = dict(status="running", results=[], notes=[], msg="Buscando no Printables…", q=q, sites=sites, headless=headless)
     try:
+        terms = expand_terms(lid, q, job) if expand else [q]
+        job["terms"] = terms
+        job["msg"] = "Buscando no Printables…"
         if "printables" in sites:
-            try:
-                job["results"] += model_search.search_printables(q)
-            except ValueError as e:
-                job["notes"].append(str(e))
+            lists = []
+            for tm in terms:
+                try:
+                    lists.append([dict(r, query=tm) for r in model_search.search_printables(tm, 10)])
+                except ValueError as e:
+                    job["notes"].append(str(e))
+            job["results"] += model_search.round_robin(lists, 8)
         browser = [x for x in sites if x in model_search.BROWSER_SITES]
         show = ["printables"] if "printables" in sites and not headless and profile else []  # só para você ver a busca na janela
         if (browser or show) and profile:
             job["msg"] = ("Abrindo o Chrome" if not headless else "Buscando em segundo plano") + ". Se pedir verificação, resolva na janela."
             with browser_lock:
-                r, n = model_search.search_browser(q, profile, show + browser, on_captcha=lambda p, kind="captcha": popup(*MANUAL[kind]) if p else None, headless=headless)
+                r, n = model_search.search_browser(terms[:4], profile, show + browser, on_captcha=lambda p, kind="captcha": popup(*MANUAL[kind]) if p else None, headless=headless)
             job["results"] += r
             job["notes"] += n
         elif browser:
@@ -564,10 +618,55 @@ def run_model_search(lid, q, profile, sites, headless=None):
         job["results"].sort(key=lambda r: list(model_search.SITES).index(r["source"]))  # MakerWorld primeiro
         if not job["results"] and not job["notes"]:
             job["notes"].append("nenhum modelo achado; os sites estão em inglês, use “Sugerir termos”")
-        job.update(status="done", msg=f"{len(job['results'])} modelos encontrados")
+        job.update(msg=f"{len(job['results'])} modelos encontrados")
+        compare_with_ad(lid, job)
+        job.update(status="done")
     except Exception as e:
         job.update(status="error", msg=str(e)[:300])
-    put_setting(f"msearch:{lid}", {k: job.get(k) for k in ("q", "sites", "headless", "results", "notes", "msg")} | dict(at=datetime.now().isoformat(timespec="seconds")))
+    put_setting(f"msearch:{lid}", {k: job.get(k) for k in ("q", "sites", "headless", "results", "notes", "msg", "verdict", "best", "desc", "terms")} | dict(at=datetime.now().isoformat(timespec="seconds")))
+
+
+def compare_with_ad(lid, job):
+    """Nota de identidade de cada candidato contra a foto do anúncio. job['verdict']: 'identico' (nota alta) ou 'sem_identico'; sem foto ou sem Claude, só avisa."""
+    job["verdict"] = job["best"] = None
+    if not job["results"]:
+        return
+    with db() as c:
+        row = c.execute("SELECT title FROM listings WHERE id=?", (lid,)).fetchone()
+    photo = IMAGES / f"{lid}.img"
+    if not photo.is_file():
+        job["notes"].append("sem a foto do anúncio guardada: a nota de identidade não foi calculada")
+        return
+    job["msg"] += ". Comparando com a foto do anúncio…"
+    try:
+        job["best"], job["verdict"] = identity.score_candidates(row["title"] if row else "", [photo], job["results"])
+        job["msg"] = job["msg"].replace(". Comparando com a foto do anúncio…", "")
+        skipped = sum(1 for r in job["results"] if "identity" not in r)
+        if skipped:
+            job["notes"].append(f"{skipped} modelo(s) sem prévia legível não foram comparados")
+        if job["verdict"] == "identico":
+            auto_accept(lid, job)
+        else:
+            job["notes"].append(f"nenhum modelo parece idêntico (nota mínima {identity.THRESHOLD}): escolha um à mão ou envie o seu STL")
+    except ValueError as e:
+        job["notes"].append("nota de identidade indisponível: " + str(e)[:150])
+
+
+def auto_accept(lid, job):
+    """Modelo idêntico (nota alta, licença sem restrição comercial) do Printables, com um único arquivo e sem modelo já escolhido: guarda sozinho.
+    Com mais de um arquivo ou em outro site, a pessoa escolhe (não dá para saber qual arquivo cabe na mesa)."""
+    r = job["results"][job["best"]]
+    with db() as c:
+        m = c.execute("SELECT file_path FROM models WHERE listing_id=?", (lid,)).fetchone()
+    if r["source"] != "printables" or (m and m["file_path"]):
+        return
+    try:
+        files = model_search.printables_files(r["id"])
+        if len(files) == 1:
+            get_printables_model(lid, r["id"], files[0]["id"], r["title"], r["url"], r["license"], model_info(dict(r, q=job["q"], file_size=files[0]["size"], model_id=r["id"])))
+            job["msg"] += f". Modelo idêntico (nota {r['identity']['score']}) guardado sozinho"
+    except ValueError as e:
+        job["notes"].append("não baixei o modelo idêntico sozinho: " + str(e)[:120])
 
 
 def suggest_terms(title):
@@ -1154,6 +1253,14 @@ class H(BaseHTTPRequestHandler):
             return self._json(get_onboarding())
         if path == "/api/media/config":
             return self._json(media_config())
+        if path == "/api/video/estimate":
+            q = parse_qs(url.query)
+            try:
+                cfg = videos.clean_video_cfg(video_cfg() | {k: q[k][0] for k in ("engine", "fps", "clip_seconds") if k in q})
+                lid = int(q.get("id", ["0"])[0])
+            except ValueError as e:
+                return self._json(dict(error=str(e)), 400)
+            return self._json(video_estimate(cfg, next(iter(sorted((PRODUCTS / str(lid) / "kit").glob("voz.*"))), None) if lid else None))
         if path == "/api/costs":
             return self._json(dict(values=get_costs(), labels=custos.LABELS))
         if path == "/api/filtros":

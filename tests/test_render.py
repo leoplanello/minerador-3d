@@ -37,7 +37,7 @@ def test_3mf_sem_malha_e_cor_invalida(tmp_path):
 def test_render_real_gera_4_imagens_com_fundo_branco(tmp_path):
     from PIL import Image
     make3mf(tmp_path / "c.3mf")
-    files = render.render_images(tmp_path / "c.3mf", tmp_path / "out")
+    files = render.render_images(tmp_path / "c.3mf", tmp_path / "out", dict(views=["frente", "lado", "cima", "tras"]))
     assert len(files) == 4
     im = Image.open(files[0])
     assert im.size == (1200, 1200) and min(im.getpixel((5, 5))) > 235  # canto branco
@@ -89,3 +89,50 @@ def test_render_real_em_uso_nao_vira_fundo_branco(tmp_path, cenario):
     studio, uso = (Image.open(f).convert("RGB") for f in files)
     assert min(studio.getpixel((5, 5))) > 235  # a foto principal continua com fundo branco
     assert min(uso.getpixel((5, 5))) < 245 or min(uso.getpixel((590, 590))) < 245  # o cenário tem cor e sombra, não é branco puro
+
+
+def test_trajetoria_da_camera_abre_e_fecha_suave():
+    p = render.camera_path(25)
+    assert len(p) == 25 and p[0][2] == 0 and p[-1][2] == 1 and p[0][0] > p[-1][0]
+    ts = [t for _, _, t in p]
+    assert ts == sorted(ts) and ts[1] - ts[0] < ts[12] - ts[11]  # começa devagar
+    assert render.camera_path(1)[0][2] == 0
+
+
+def test_objeto_que_a_peca_segura_pelo_titulo():
+    assert render.prop_for("Porta Chaves De Parede Com Porta Treco") == "chaves"
+    assert render.prop_for("Suporte Parede Vertical Roteador Modem") == "modem"  # bloco em escala, com a peça de cada lado
+    assert render.prop_for("Vaso Decorativo") == ""
+    assert "uso_medio" in render.VIEWS and "uso_aberto" in render.VIEWS and render.RENDER_DEFAULT["views"][0] == "frente"
+
+
+def test_ambiente_pelo_tipo_de_produto():
+    auto = render.clean_render_cfg({})
+    assert render.room_for(auto, "Porta Chaves De Parede Com Porta Treco") == "entrada"
+    assert render.room_for(auto, "Suporte Parede Vertical Compativel Roteador Modem Ajustavel") == "escritorio"
+    assert render.room_for(auto, "Vaso Decorativo Geométrico") == "sala"
+    assert render.room_for(render.clean_render_cfg({"ambiente": "sala"}), "Porta Chaves") == "sala"
+    with pytest.raises(ValueError):
+        render.clean_render_cfg({"ambiente": "praia"})
+    c = render.room_cfg(auto, "Suporte Roteador Modem")
+    assert c["objeto"] == "modem" and c["montagem"] == "sobre_movel" and c["sala"] is render.polyhaven.ROOMS["escritorio"]
+    assert render.room_cfg(auto, "Porta Chaves")["montagem"] == "parede_alta"
+
+
+def test_todo_ambiente_so_usa_ativos_registrados():
+    ph = render.polyhaven
+    assert len(ph.ROOMS) >= 3
+    for nome, r in ph.ROOMS.items():
+        usados = [r["wall"][0], r["floor"][0], r["hdri"][0], r["support"][0]] + [i[0] for i in r["items"]] + [e[0] for e in r["extras"]]
+        assert all(a in ph.ASSETS for a in usados), nome  # o que a cena usa é baixado e tem origem e licença registradas
+
+
+def test_acabamento_das_fotos_em_uso_escurece_a_borda(tmp_path):
+    from PIL import Image
+    p = tmp_path / "a.jpg"
+    Image.new("RGB", (400, 400), (200, 200, 200)).save(p)
+    render.finish_photo(p)
+    im = Image.open(p).convert("L")
+    centro = sum(im.crop((190, 190, 210, 210)).getdata()) / 400
+    borda = sum(im.crop((0, 0, 20, 20)).getdata()) / 400
+    assert borda < centro - 15 and abs(centro - 200) < 20  # vinheta: canto mais escuro, centro quase igual

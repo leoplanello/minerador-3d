@@ -25,7 +25,7 @@ SITES = {  # a ordem é a de preferência (impressora Bambu Lab: MakerWorld prim
     "thingiverse": "Thingiverse",
 }
 # páginas de busca dos sites que exigem navegador e como reconhecer o link de um modelo nelas
-LICENSE_PAGES = 5  # quantos modelos por site têm a página aberta para ler a licença
+LICENSE_PAGES = 8  # quantos modelos por site têm a página aberta para ler a licença
 BROWSER_SITES = {
     "makerworld": dict(search="https://makerworld.com/pt/search/models?keyword={q}", link=r"/models/(\d+)"),
     "thingiverse": dict(search="https://www.thingiverse.com/search?q={q}&type=things&sort=popular", link=r"/thing:(\d+)"),
@@ -69,6 +69,17 @@ def _gql(query, variables):
     if r.get("errors"):
         raise ValueError("o Printables recusou a consulta: " + str(r["errors"][0].get("message", ""))[:200])
     return r["data"]
+
+
+def round_robin(lists, limit):
+    """Junta listas de resultados (uma por termo de busca) sem repetir o mesmo modelo, pegando um de cada lista por vez até chegar em limit."""
+    out, seen = [], set()
+    for i in range(max(map(len, lists), default=0)):
+        for lst in lists:
+            if i < len(lst) and (lst[i]["source"], lst[i]["id"]) not in seen and len(out) < limit:
+                seen.add((lst[i]["source"], lst[i]["id"]))
+                out.append(lst[i])
+    return out
 
 
 def search_printables(q, limit=8):
@@ -135,10 +146,11 @@ ANCHORS_JS = """els => els.map(a => { const i = a.querySelector('img'); return {
 
 
 def search_browser(q, profile, sites, limit=8, on_captcha=lambda paused, kind="captcha": None, headless=False):
-    """Uma sessão do Chrome do perfil salvo para os sites que exigem navegador. Devolve (resultados, avisos).
-    "printables" em sites só mostra a página de busca na janela (os resultados dele vêm da API); com headless=False a janela fica à vista."""
+    """Uma sessão do Chrome do perfil salvo para os sites que exigem navegador. q: um termo ou uma lista de termos (os resultados se intercalam sem repetir).
+    Devolve (resultados, avisos). "printables" em sites só mostra a página de busca na janela (os resultados dele vêm da API); com headless=False a janela fica à vista."""
     if profile not in list_profiles():
         raise ValueError(f"perfil desconhecido: {profile}")
+    queries = [q] if isinstance(q, str) else list(q)
     results, notes = [], []
     with sync_playwright() as p:
         ctx = launch_ctx(p, profile, headless=headless)
@@ -148,16 +160,22 @@ def search_browser(q, profile, sites, limit=8, on_captcha=lambda paused, kind="c
             for site in sites:
                 try:
                     if site == "printables":
-                        page.goto("https://www.printables.com/search/models?q=" + urllib.parse.quote(q), wait_until="domcontentloaded", timeout=45000)
+                        page.goto("https://www.printables.com/search/models?q=" + urllib.parse.quote(queries[0]), wait_until="domcontentloaded", timeout=45000)
                         page.wait_for_timeout(4000)
                         continue
-                    page.goto(BROWSER_SITES[site]["search"].format(q=urllib.parse.quote(q)), wait_until="domcontentloaded", timeout=45000)
-                    if "just a moment" in page.title().lower() or _captcha(page):  # verificação do Cloudflare: a pessoa resolve na janela
-                        _wait_human(page, on_captcha)
-                    page.wait_for_timeout(3500)
-                    page.mouse.wheel(0, 1500)
-                    page.wait_for_timeout(1500)
-                    found = extract_model_links(site, page.eval_on_selector_all("a[href]", ANCHORS_JS))[:limit]
+                    lists = []
+                    for qq in queries:
+                        try:
+                            page.goto(BROWSER_SITES[site]["search"].format(q=urllib.parse.quote(qq)), wait_until="domcontentloaded", timeout=45000)
+                            if "just a moment" in page.title().lower() or _captcha(page):  # verificação do Cloudflare: a pessoa resolve na janela
+                                _wait_human(page, on_captcha)
+                            page.wait_for_timeout(3500)
+                            page.mouse.wheel(0, 1500)
+                            page.wait_for_timeout(1500)
+                            lists.append([dict(r, query=qq) for r in extract_model_links(site, page.eval_on_selector_all("a[href]", ANCHORS_JS))])
+                        except Exception as e:
+                            notes.append(f"{SITES[site]} ({qq}): {str(e)[:100]}")
+                    found = round_robin(lists, limit)
                     for r in found[:LICENSE_PAGES]:  # a página de busca não traz a licença: abro a página de cada modelo
                         try:
                             page.goto(r["url"], wait_until="domcontentloaded", timeout=45000)
