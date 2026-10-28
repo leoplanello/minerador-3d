@@ -8,6 +8,7 @@ import sqlite3
 import zipfile
 from datetime import datetime
 import sys
+import time
 import threading
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -28,6 +29,7 @@ import slice as fatiar  # noqa: E402
 import video as videos  # noqa: E402
 import identity  # noqa: E402
 import polyhaven  # noqa: E402
+import perfis  # noqa: E402
 import selecao  # noqa: E402
 import texto  # noqa: E402  (scripts/app/slice.py; mesmo diretório do server.py)
 from classify import score  # noqa: E402
@@ -172,7 +174,7 @@ def put_setting(key, value):
         c.execute("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, json.dumps(value)))
 
 
-MEDIA_RE = re.compile(r"(render|photo)_\d+\.jpg")
+MEDIA_RE = re.compile(r"(render|photo|cena)_\d+\.jpg")
 AUDIO_EXT = {".wav", ".mp3", ".m4a", ".ogg"}
 
 
@@ -366,6 +368,8 @@ def kit_zip(lid):
             z.write(PRODUCTS / str(lid) / "renders" / n, f"imagens/{i:02d}-{'foto-real' if n.startswith('photo') else 'ambiente-3d'}-{n}")
         am = cand["amostra"]
         z.writestr("LEIA-ME-fotos.txt", leia_me_fotos(cand))
+        if (cena_dir(lid) / "video.mp4").is_file():
+            z.write(cena_dir(lid) / "video.mp4", "video-sala-virtual.mp4")
     return buf.getvalue()
 
 
@@ -991,6 +995,97 @@ def set_created(lid, created):
         c.execute("UPDATE listings SET created=? WHERE id=?", (created[:10], lid))
 
 
+CENA_JOBS = {}  # lid -> andamento da sala virtual (imagem final ou vídeo), só em memória
+
+
+def cena_dir(lid):
+    return PRODUCTS / str(lid) / "cena"
+
+
+def cena_model(lid, cena):
+    """Modelo da sala virtual: o que você enviou só para a cena (cena/modelo.stl ou .3mf) ou o do produto."""
+    if cena.get("modelo") == "enviado":
+        f = next(iter(sorted(cena_dir(lid).glob("modelo.*"))), None)
+        if not f:
+            raise ValueError("envie o arquivo do modelo (.stl ou .3mf) ou escolha o modelo do produto")
+        return f
+    with db() as c:
+        m = c.execute("SELECT file_path FROM models WHERE listing_id=?", (lid,)).fetchone()
+    if not m or not m["file_path"]:
+        raise ValueError("o produto ainda não tem modelo 3D: envie um arquivo para a sala virtual")
+    return ROOT / m["file_path"]
+
+
+def cena_titulo(lid):
+    with db() as c:
+        r = c.execute("SELECT title FROM listings WHERE id=?", (lid,)).fetchone()
+    return (r["title"] if r else "") or ""
+
+
+def set_cena_modelo(lid, name, data):
+    """Arquivo só para a sala virtual: não troca o modelo do produto nem mexe nas etapas."""
+    name = re.sub(r"[^\w.\- ]", "_", Path(name).name)
+    ext = Path(name).suffix.lower()
+    if ext not in MODEL_EXT:
+        raise ValueError("só arquivos .3mf ou .stl")
+    if not 0 < len(data) <= MAX_MODEL:
+        raise ValueError("arquivo vazio ou maior que 200 MB")
+    d = cena_dir(lid)
+    d.mkdir(parents=True, exist_ok=True)
+    for old in d.glob("modelo.*"):
+        old.unlink()
+    (d / f"modelo{ext}").write_bytes(data)
+    return f"modelo{ext}"
+
+
+def cena_previa(lid, cena):
+    """Pré-visualização rápida (EEVEE, 640 px). Devolve o caminho do JPG."""
+    c = renderizar.clean_cena(cena)
+    model = cena_model(lid, c)
+    with render_lock:
+        try:
+            polyhaven.ensure()
+        except Exception:
+            pass
+        f = renderizar.render_cena(model, cena_dir(lid) / "previa", c, preview=True, title=cena_titulo(lid))
+    out = cena_dir(lid) / "previa.jpg"
+    out.write_bytes(f.read_bytes())
+    put_setting(f"cena:{lid}", c)
+    return out
+
+
+def run_cena(lid, cena, kind, seconds=6, fps=24, engine="EEVEE"):
+    """Imagem final (Cycles, 1200 px) que vai para a galeria do produto como cena_N.jpg, ou vídeo com a câmera orbital em cena/video.mp4."""
+    job = CENA_JOBS[lid] = dict(status="running", kind=kind, msg="Renderizando…")
+    try:
+        c = renderizar.clean_cena(cena)
+        model = cena_model(lid, c)
+        put_setting(f"cena:{lid}", c)
+        with render_lock:
+            try:
+                polyhaven.ensure()
+            except Exception:
+                pass
+            if kind == "imagem":
+                f = renderizar.render_cena(model, cena_dir(lid) / "final", c, title=cena_titulo(lid))
+                d = PRODUCTS / str(lid) / "renders"
+                d.mkdir(parents=True, exist_ok=True)
+                n = 1 + max([int(re.search(r"\d+", x.name).group()) for x in d.glob("cena_*.jpg")] or [0])
+                (d / f"cena_{n}.jpg").write_bytes(f.read_bytes())
+                job.update(status="ok", msg=f"Imagem cena_{n}.jpg guardada nas imagens do produto.", file=f"cena_{n}.jpg")
+            else:
+                W, H = videos.FORMATS[video_cfg()["format"]]
+                n = max(2, round(seconds * fps))
+                frames = renderizar.render_frames(model, cena_dir(lid) / "quadros", n, engine=engine, res=(W, H), title=cena_titulo(lid), cfg=dict(render_cfg(), quality="rapido"), cena=c)
+                with db() as cn:
+                    k = cn.execute("SELECT title, scripts FROM kits WHERE listing_id=?", (lid,)).fetchone()
+                script = (json.loads(k["scripts"] or "[]") or [k["title"]])[0] if k else cena_titulo(lid)
+                videos.make_camera_video(frames, script, cena_dir(lid) / "video.mp4", cfg=dict(video_cfg(), fps=fps, clip_seconds=seconds))
+                job.update(status="ok", msg="Vídeo da sala virtual pronto.")
+    except Exception as e:
+        job.update(status="error", msg=str(e)[:300])
+
+
 def candidates():
     cc = get_costs()
     F = get_filters()
@@ -1265,6 +1360,13 @@ class H(BaseHTTPRequestHandler):
             return self._json(dict(values=get_costs(), labels=custos.LABELS))
         if path == "/api/filtros":
             return self._json(dict(values=get_filters(), labels=selecao.LABELS))
+        if path == "/api/cena":
+            lid = int(parse_qs(url.query).get("id", ["0"])[0])
+            return self._json(dict(cena=get_setting(f"cena:{lid}") or renderizar.clean_cena({}), job=CENA_JOBS.get(lid), previa=(cena_dir(lid) / "previa.jpg").is_file(), video=(cena_dir(lid) / "video.mp4").is_file(),
+                                   modelo_enviado=next((f.name for f in sorted(cena_dir(lid).glob("modelo.*"))), None), opcoes={k: list(v) for k, v in renderizar.CENA_CHOICES.items()},
+                                   ambientes={k: v["label"] for k, v in polyhaven.ROOMS.items()}))
+        if path == "/api/perfis":
+            return self._json(dict(app=perfis.app_profiles(), chrome=perfis.system_profiles(), servicos={k: v[0] for k, v in perfis.SERVICES.items()}, prefixo=perfis.PREFIX))
         if path == "/api/selecao":
             return self._json(selecao_overview())
         if path == "/api/similares":
@@ -1304,7 +1406,7 @@ class H(BaseHTTPRequestHandler):
             pid = path.rsplit("/", 1)[1]
             found = next((c for c in candidates() if str(c["id"]) == pid), None)
             return self._json(found or dict(error="produto não encontrado"), 200 if found else 404)
-        m = re.fullmatch(r"/products/(\d+)/renders/((?:render|photo)_\d+\.jpg)", path)  # só as fotos geradas, nunca outro arquivo
+        m = re.fullmatch(r"/products/(\d+)/renders/((?:render|photo|cena)_\d+\.jpg)", path)  # só as fotos geradas, nunca outro arquivo
         if m:
             f = PRODUCTS / m.group(1) / "renders" / m.group(2)
             if not f.is_file():
@@ -1312,6 +1414,14 @@ class H(BaseHTTPRequestHandler):
             body = f.read_bytes()
             self.send_response(200)
             self.send_header("Content-Type", "image/jpeg")
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        m = re.fullmatch(r"/products/(\d+)/cena/(previa\.jpg|video\.mp4)", path)  # só a prévia e o vídeo da sala virtual
+        if m and (cena_dir(m.group(1)) / m.group(2)).is_file():
+            body = (cena_dir(m.group(1)) / m.group(2)).read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", "image/jpeg" if m.group(2).endswith(".jpg") else "video/mp4")
             self.end_headers()
             self.wfile.write(body)
             return
@@ -1372,6 +1482,15 @@ class H(BaseHTTPRequestHandler):
             except (ValueError, KeyError) as e:
                 return self._json(dict(error=str(e)), 400)
             return self._json(dict(ok=True))
+        if url.path == "/api/cena/modelo":  # arquivo só para a sala virtual: corpo bruto, id e nome na query
+            q = parse_qs(url.query)
+            if n > MAX_MODEL:
+                return self._json(dict(error="arquivo maior que 200 MB"), 413)
+            try:
+                nome = set_cena_modelo(int(q["id"][0]), q["name"][0], self.rfile.read(n))
+            except (ValueError, KeyError) as e:
+                return self._json(dict(error=str(e)), 400)
+            return self._json(dict(ok=True, arquivo=nome))
         if url.path == "/api/model/upload":  # corpo bruto = o arquivo; id e nome vão na query
             q = parse_qs(url.query)
             if n > MAX_MODEL:
@@ -1442,6 +1561,30 @@ class H(BaseHTTPRequestHandler):
                 c.execute("UPDATE steps SET status='running' WHERE listing_id=? AND name='copy'", (data["id"],))
             threading.Thread(target=run_copy, args=(data["id"],), daemon=True).start()
             return self._json(dict(ok=True))
+        if path in ("/api/cena/previa", "/api/cena/render", "/api/cena/video"):
+            try:
+                lid = int(data["id"])
+                if lid not in {c["id"] for c in candidates()}:
+                    raise ValueError("produto não encontrado")
+                cena = renderizar.clean_cena(data.get("cena"))
+                if CENA_JOBS.get(lid, {}).get("status") == "running":
+                    raise ValueError("já tem uma imagem ou vídeo da sala virtual em andamento")
+                if path == "/api/cena/previa":
+                    cena_previa(lid, cena)
+                    return self._json(dict(ok=True, url=f"/products/{lid}/cena/previa.jpg?t={int(time.time())}"))
+                kind = "imagem" if path.endswith("render") else "video"
+                seg = min(max(int(data.get("segundos", 6)), 3), 20)
+                engine = "CYCLES" if data.get("motor") == "cycles" else "EEVEE"
+                threading.Thread(target=run_cena, args=(lid, cena, kind, seg, 24, engine), daemon=True).start()
+            except (ValueError, TypeError, KeyError) as e:
+                return self._json(dict(error=str(e)), 400)
+            return self._json(dict(ok=True))
+        if path == "/api/perfis/adicionar":
+            try:
+                nome = perfis.add_profile(data.get("apelido"), data.get("servico"))
+            except (ValueError, TypeError) as e:
+                return self._json(dict(error=str(e)), 400)
+            return self._json(dict(ok=True, perfil=nome))
         if path == "/api/filtros":
             try:
                 put_setting("filters", selecao.clean_filters(data))

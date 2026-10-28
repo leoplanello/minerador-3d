@@ -58,7 +58,8 @@ def whiten(path):
 # ângulo (azimute, elevação, zoom da câmera) de cada vista que dá para pedir
 VIEWS = {"frente": (35, 28, 1.0), "lado": (125, 22, 1.0), "cima": (-50, 55, 1.0), "tras": (215, 25, 1.0),
          "frontal": (0, 12, 1.0), "topo": (0, 88, 1.0), "perfil": (90, 5, 1.0), "detalhe": (35, 20, 0.6),
-         "uso": (26, 10, 1.0), "uso_perto": (-34, 12, 0.6), "uso_medio": (-22, 9, 1.0), "uso_aberto": (32, 12, 1.0)}  # "uso*": a peça instalada no cenário (parede ou mesa)
+         "uso": (26, 10, 1.0), "uso_perto": (-34, 12, 0.6), "uso_medio": (-22, 9, 1.0), "uso_aberto": (32, 12, 1.0),
+         "cena": (-34, 12, 1.0), "cena_frontal": (0, 4, 1.0), "cena_close": (-25, 10, 1.0), "cena_orbital": (0, 10, 1.0)}  # "uso*": a peça instalada no cenário (parede ou mesa)
 VIEW_LABELS = {"frente": "Frente 3/4", "lado": "Lado", "cima": "De cima", "tras": "Trás 3/4", "frontal": "Frontal", "topo": "Topo", "perfil": "Perfil", "detalhe": "Detalhe (zoom)",
                "uso": "Em uso (com o objeto)", "uso_perto": "Em uso, detalhe de perto", "uso_medio": "Ambiente médio", "uso_aberto": "Ambiente aberto"}
 QUALITY = {"rapido": (16, 12), "normal": (32, 24), "alta": (64, 64)}  # amostras EEVEE, Cycles
@@ -134,7 +135,54 @@ def scene_for(cfg, title=""):
     return "parede" if "parede" in t or "wall" in t or (any(w in t for w in WALL_WORDS) and "mesa" not in t and "bancada" not in t) else "mesa"
 
 
-def render_images(model, outdir, cfg=None, title=""):
+CENA_DEFAULT = dict(ambiente="sala", colocacao="mesa", escala_pct=100, giro=0, referencia="nenhuma", camera="3/4", luz="dia", modelo="produto")
+CENA_CHOICES = dict(ambiente=tuple(polyhaven.ROOMS), colocacao=("chao", "mesa", "parede", "prateleira"), referencia=("nenhuma", "moeda", "caneca", "celular"),
+                    camera=("3/4", "frontal", "close", "orbital"), luz=("dia", "tarde", "noite"), modelo=("produto", "enviado"))
+CENA_VIEW = {"3/4": "cena", "frontal": "cena_frontal", "close": "cena_close", "orbital": "cena"}  # a câmera orbital só se move no vídeo; na imagem vale o 3/4
+
+
+def clean_cena(d):
+    """Valida a sala virtual vinda da tela e completa com o padrão. Levanta ValueError com o motivo."""
+    c = CENA_DEFAULT | {k: v for k, v in (d or {}).items() if k in CENA_DEFAULT}
+    for k, ok in CENA_CHOICES.items():
+        if c[k] not in ok:
+            raise ValueError(f"{k}: opção inválida")
+    try:
+        esc, giro = float(c["escala_pct"]), int(c["giro"])
+    except (TypeError, ValueError):
+        raise ValueError("escala ou giro inválido")
+    if not 10 <= esc <= 500:
+        raise ValueError("a escala deve ficar entre 10% e 500%")
+    if not 0 <= giro < 360:
+        raise ValueError("o giro deve ficar entre 0 e 359 graus")
+    return c | dict(escala_pct=esc, giro=giro)
+
+
+def cena_cfg(c):
+    """O que o Blender recebe da sala virtual: o ambiente escolhido e os controles; sem o objeto automático (modem, chaves) do produto."""
+    return dict(cena=c, sala=polyhaven.ROOMS[c["ambiente"]], objeto="", montagem="")
+
+
+def orbit_path(n):
+    """Câmera orbital do vídeo: dá meia volta suave em volta da peça (de -70 a +70 graus), com começo e fim lentos."""
+    out = []
+    for i in range(n):
+        x = i / max(n - 1, 1)
+        t = x * x * (3 - 2 * x)
+        out.append((-70 + 140 * t, 12 - 4 * t, t))
+    return out
+
+
+def render_cena(model, outdir, cena, preview=False, title=""):
+    """Imagem da sala virtual com a peça (a do produto ou uma enviada). preview=True: EEVEE em 640 px e poucas amostras, em segundos;
+    senão 1200 px em Cycles com denoiser. Devolve o caminho do JPG (render_1.jpg em outdir)."""
+    c = clean_cena(cena)
+    cfg = dict(views=[CENA_VIEW[c["camera"]]], size=640 if preview else 1200, quality="rapido" if preview else "normal", background="gray", fill="perto")
+    files = render_images(model, outdir, cfg, title=title, cena=c, preview=preview)
+    return files[0]
+
+
+def render_images(model, outdir, cfg=None, title="", cena=None, preview=False):
     """Devolve a lista de JPGs gerados (render_1.jpg...). Tenta EEVEE e cai para Cycles (CPU) se a placa de vídeo não aceitar.
     cfg: dict de clean_render_cfg ou, por compatibilidade, só a cor '#rrggbb'. title: título do anúncio, escolhe o cenário das vistas 'em uso'."""
     if not BLENDER.exists():
@@ -145,6 +193,7 @@ def render_images(model, outdir, cfg=None, title=""):
         old.unlink()
     with tempfile.TemporaryDirectory() as tmp:
         scene_cfg = cfg | dict(polyhaven=str(polyhaven.ROOT) if polyhaven.available() else "", views=[(v, *VIEWS[v]) for v in cfg["views"]], contexto=scene_for(cfg, title), **room_cfg(cfg, title), samples_eevee=QUALITY[cfg["quality"]][0], samples_cycles=QUALITY[cfg["quality"]][1], dist=FILL[cfg["fill"]])
+        scene_cfg |= (cena_cfg(cena) | dict(still_cycles=not preview)) if cena else {}
         cfgfile = Path(tmp) / "cfg.json"
         cfgfile.write_text(json.dumps(scene_cfg), encoding="utf-8")
         stl = Path(model)
@@ -162,10 +211,10 @@ def render_images(model, outdir, cfg=None, title=""):
             if len(files) == len(cfg["views"]):
                 if cfg["background"] == "white":  # a foto principal do ML precisa de fundo branco puro
                     for f, v in zip(files, cfg["views"]):
-                        if not v.startswith("uso"):  # o cenário em uso mantém a cor do ambiente
+                        if not v.startswith(("uso", "cena")):  # o cenário em uso mantém a cor do ambiente
                             whiten(f)
                 for f, v in zip(files, cfg["views"]):
-                    if v.startswith("uso"):
+                    if v.startswith(("uso", "cena")):
                         finish_photo(f)
                 return files
             err = (r.stderr or r.stdout)[-300:]
@@ -182,7 +231,7 @@ def camera_path(n):
     return out
 
 
-def render_frames(model, outdir, n, engine="EEVEE", res=(1080, 1920), title="", cfg=None, on_time=lambda spf: None, timeout=6 * 3600):
+def render_frames(model, outdir, n, engine="EEVEE", res=(1080, 1920), title="", cfg=None, on_time=lambda spf: None, timeout=6 * 3600, cena=None):
     """Quadros do vídeo em outdir/render_1.jpg... (câmera em movimento no cenário 'em uso'). engine: 'EEVEE' (rápido) ou 'CYCLES' (demora horas).
     on_time recebe os segundos por quadro medidos, para a estimativa da próxima vez. Devolve os caminhos em ordem."""
     if not BLENDER.exists():
@@ -193,8 +242,9 @@ def render_frames(model, outdir, n, engine="EEVEE", res=(1080, 1920), title="", 
         old.unlink()
     with tempfile.TemporaryDirectory() as tmp:
         scene_cfg = cfg | dict(polyhaven=str(polyhaven.ROOT) if polyhaven.available() else "", contexto=scene_for(cfg, title), **room_cfg(cfg, title), still_cycles=False, res=list(res),
-                               views=[("uso", az, el, 1.0, t) for az, el, t in camera_path(n)], samples_eevee=QUALITY[cfg["quality"]][0],
-                               samples_cycles=QUALITY[cfg["quality"]][1], dist=FILL[cfg["fill"]])
+                               views=[("cena_orbital" if cena else "uso", az, el, 1.0, t) for az, el, t in (orbit_path(n) if cena else camera_path(n))],
+                               samples_eevee=QUALITY[cfg["quality"]][0], samples_cycles=QUALITY[cfg["quality"]][1], dist=FILL[cfg["fill"]])
+        scene_cfg |= (cena_cfg(clean_cena(cena)) | dict(still_cycles=False)) if cena else {}
         cfgfile = Path(tmp) / "cfg.json"
         cfgfile.write_text(json.dumps(scene_cfg), encoding="utf-8")
         stl = Path(model)

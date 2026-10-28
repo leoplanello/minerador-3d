@@ -90,11 +90,12 @@ const VIEWS = {
       <div class="card"><h2>Custos e taxas</h2>
         <p class="small mut" style="margin-top:0">Valores provisórios (estimativas). A margem de cada produto usa estes números; marque “confirmado” quando forem os reais.</p>
         <div class="form" id="cform"></div></div>
+      <div class="card" id="perfcard"></div>
       <div class="card" id="selconf"></div>
       <div class="card"><h2>Dados da loja (usados no texto dos anúncios)</h2><div class="form" id="bform"></div></div>
       <div class="card"><h2>Conta do Mercado Livre</h2><p id="mlst" class="small mut" style="margin-top:0"></p><div class="form" id="mlcfg"></div></div>`,
     bind: async () => {
-      SEL.bindConfig();
+      SEL.bindConfig(); PERFIS.bind();
       const {values, labels} = await (await fetch('/api/costs')).json();
       $('cform').innerHTML = Object.keys(labels).map(k => `<label>${esc(labels[k])}<input type="number" step="0.01" min="0" data-k="${k}" value="${values[k]}"></label>`).join('') +
         `<label class="row" style="flex-direction:row;gap:8px;color:var(--fg);font-size:14px"><input type="checkbox" id="cconf" ${values.confirmado ? 'checked' : ''}> Estes são os custos reais (confirmado)</label>
@@ -186,6 +187,7 @@ const VIEWS = {
     mount: () => `<div id="prod"></div>
       <div class="card" id="ovcard" hidden></div>
       <div class="card" id="selcard" hidden></div>
+      <div class="card" id="salacard" hidden></div>
       <div class="card" id="tlcard" hidden><div class="card-h"><h2>Linha do tempo</h2><span class="small mut">cada etapa, quando rodou e quanto levou</span></div><div id="tline"></div></div>
       <div class="card" id="mcard" hidden><div class="card-h"><h2>Modelo 3D</h2><span id="mchip" class="chip"></span></div>
         <p id="mstate" class="small mut" style="margin:0 0 12px"></p>
@@ -348,6 +350,7 @@ const VIEWS = {
       if (!c) return;
       $('ovcard').hidden = false; $('ovcard').innerHTML = overview(c);
       SEL.render(c);
+      SALA.show(c);
       $('tlcard').hidden = false;
       const msgs = {slice: c.slice_msg, copy: c.copy_msg, images: c.images_msg, video: c.video_msg, shopee: ''};
       $('tline').innerHTML = `<ol class="tl">${S.steps.map(n => { const st = c.steps[n] || 'pending', t = (c.step_times || {})[n] || {}, own = c.publications[n];

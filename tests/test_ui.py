@@ -321,3 +321,51 @@ def test_foto_real_amostra_e_aviso_no_produto_aprovado(gui):
         page.wait_for_selector("#selcard:not([hidden])")
         assert page.locator(".sel-foto").count() == 0
         b.close()
+
+
+def test_perfis_do_chrome_na_configuracao(gui, tmp_path, monkeypatch):
+    import json
+    import perfis
+    (tmp_path / "Local State").write_text(json.dumps({"profile": {"last_used": "Profile 5", "info_cache": {"Profile 5": {"name": "Pessoal", "user_name": "p@exemplo.com"}, "Default": {"name": "Seu Chrome"}}}}), encoding="utf-8")
+    monkeypatch.setattr(perfis, "CHROME_USER_DATA", tmp_path)
+    monkeypatch.setattr(perfis, "PROFILES_DIR", tmp_path / "perfis-app")
+    abertos = []
+    monkeypatch.setattr(perfis, "proc", type("P", (), {"popen": staticmethod(lambda cmd, **kw: abertos.append(cmd) or type("F", (), {"wait": lambda self: None})())}))
+    monkeypatch.setattr(perfis, "chrome_path", lambda: "chrome.exe")
+    with playwright.sync_playwright() as p:
+        b = p.chromium.launch(channel="chrome")
+        page = b.new_page(viewport={"width": 1280, "height": 800})
+        page.goto(f"{gui}/#/config")
+        page.wait_for_selector("#pfadd")
+        assert "Nenhum perfil do app ainda" in page.inner_text("#perfcard")
+        page.click("#perfcard summary")
+        assert "Pessoal" in page.inner_text("#perfcard") and "p@exemplo.com" in page.inner_text("#perfcard") and "Seu Chrome" in page.inner_text("#perfcard")
+        page.click("[data-clone=Pessoal]")
+        assert page.input_value("#pfnick") == "Pessoal"
+        page.select_option("#pfserv", "mercadolivre")
+        page.click("#pfadd")
+        page.wait_for_timeout(800)
+        assert abertos and abertos[0][-1] == "https://www.mercadolivre.com.br/login" and (tmp_path / "perfis-app" / "Minerador 3D - Pessoal").is_dir()
+        assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
+        b.close()
+
+
+def test_sala_virtual_na_tela_do_produto(gui):
+    with playwright.sync_playwright() as p:
+        b = p.chromium.launch(channel="chrome")
+        page = b.new_page(viewport={"width": 1280, "height": 800})
+        page.goto(f"{gui}/#/producao/1")  # produto novo: sem sala virtual
+        page.wait_for_selector("#selcard:not([hidden])")
+        assert page.is_hidden("#salacard")
+        page.goto(f"{gui}/#/producao/2")
+        page.wait_for_selector("#slprev")
+        txt = page.inner_text("#salacard")
+        assert "Sala virtual" in txt and "Pré-visualizar" in txt and "Gerar vídeo orbital" in txt
+        assert page.locator("#sl_ambiente option").count() == 6 and page.locator("#sl_colocacao option").count() == 4
+        page.select_option("#sl_luz", "noite")
+        page.fill("#sl_escala", "250")
+        assert "250%" in page.inner_text("#sl_escv")
+        page.check("#slcyc")
+        assert "Cycles" in page.inner_text("#slest")
+        assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
+        b.close()

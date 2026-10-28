@@ -64,7 +64,7 @@ def test_abrir_chrome_para_login_so_em_sites_conhecidos(monkeypatch):
     sr.open_for_login("user1", "https://www.mercadolivre.com.br/")
     cmd = chamadas[0]
     assert cmd[0] == "chrome.exe" and cmd[1].startswith("--user-data-dir=") and cmd[1].endswith("user1") and "--enable-automation" not in " ".join(cmd)
-    for perfil, url in [("user1", "https://evil.com/login"), ("user1", "https://mercadolivre.com.br.evil.com/"), ("user1", "http://www.mercadolivre.com.br/"), ("user1", "https://shopee.com.br/"), ("../x", "https://www.mercadolivre.com.br/")]:
+    for perfil, url in [("user1", "https://evil.com/login"), ("user1", "https://mercadolivre.com.br.evil.com/"), ("user1", "http://www.mercadolivre.com.br/"), ("user1", "https://amazon.com.br/"), ("../x", "https://www.mercadolivre.com.br/")]:
         with pytest.raises(ValueError):
             sr.open_for_login(perfil, url)
     assert len(chamadas) == 1

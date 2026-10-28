@@ -45,7 +45,7 @@ def chrome_path():
     raise ValueError("não achei o Google Chrome instalado; defina CHROME_PATH")
 
 
-LOGIN_HOSTS = ("mercadolivre.com.br", "mercadolibre.com", "makerworld.com", "printables.com", "thingiverse.com", "accounts.google.com")
+LOGIN_HOSTS = ("mercadolivre.com.br", "mercadolibre.com", "makerworld.com", "printables.com", "thingiverse.com", "accounts.google.com", "shopee.com.br")
 
 
 def open_for_login(profile, url):
