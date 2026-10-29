@@ -32,6 +32,7 @@ const SALA = {
         <div class="row small"><span>Modelo:</span><label class="chk"><input type="radio" name="slmod" value="produto" ${v.modelo !== 'enviado' ? 'checked' : ''}> do produto</label>
           <label class="chk"><input type="radio" name="slmod" value="enviado" ${v.modelo === 'enviado' ? 'checked' : ''}> um arquivo só para a cena ${d.modelo_enviado ? `(${esc(d.modelo_enviado)})` : ''}</label>
           <input id="slfile" type="file" accept=".stl,.3mf"></div>
+        <div id="slblend" class="small" style="border-top:1px solid var(--line);padding-top:10px"></div>
         <div class="row"><button id="slprev" class="pri sm">Pré-visualizar (rápido)</button><button id="slfinal" class="sm">Gerar imagem final</button>
           <label class="small">Vídeo (s)<input id="slseg" type="number" min="3" max="20" value="6" style="width:64px"></label>
           <label class="chk small"><input type="checkbox" id="slcyc"> Cycles</label><button id="slvid" class="sm">Gerar vídeo orbital</button></div>
@@ -53,11 +54,49 @@ const SALA = {
     $('slprev').onclick = async () => { const r = await run($('slprev'), '/api/cena/previa', {}, 'Pré-visualização pronta.'); if (r) { const im = $('slimg'); im.style.display = ''; im.src = r.url; } };
     $('slfinal').onclick = async () => { const r = await run($('slfinal'), '/api/cena/render', {}, 'Renderizando a imagem final em Cycles (alguns minutos)…'); if (r) this.poll(c); };
     $('slvid').onclick = async () => { const r = await run($('slvid'), '/api/cena/video', {segundos: +$('slseg').value || 6, motor: $('slcyc').checked ? 'cycles' : 'eevee'}, 'Renderizando os quadros do vídeo…'); if (r) this.poll(c); };
+    this.blend(c);
+  },
+  // sala editável: o app gera a sala.blend, abre o Blender, e as imagens e o vídeo saem do arquivo salvo
+  async blend(c) {
+    const box = $('slblend'); if (!box) return;
+    const d = this.data = await (await fetch('/api/cena?id=' + c.id)).json(), s = d.sala, j = d.job;
+    $('sl_ambiente') && ['ambiente', 'colocacao', 'referencia', 'luz', 'escala', 'giro'].forEach(k => { const e = $('sl_' + k); if (e) e.disabled = s.existe; });
+    const ocupado = j && j.status === 'running';
+    box.innerHTML = !s.existe
+      ? `<b>Editar a sala no Blender</b>
+         <p class="mut" style="margin:4px 0">Monta a sala com as opções acima e cria um arquivo <code>sala.blend</code> com cada móvel solto. Você abre no Blender, move tudo do seu jeito, salva e fecha. As imagens e o vídeo passam a sair desse arquivo.</p>
+         <button id="slmake" class="sm" ${ocupado ? 'disabled' : ''}>Montar a sala para editar</button> <span id="slbmsg" class="mut">${ocupado ? esc(j.msg) : ''}</span>`
+      : `<b>Sala editável</b> <span class="chip ${s.aberto ? '' : 'ok'}">${s.aberto ? 'Aberta no Blender: salve (Ctrl+S) e feche a janela' : 'Salva ' + esc(s.salvo_em.replace('T', ' ')) + ' (' + s.tamanho_mb + ' MB)'}</span>
+         <p class="mut" style="margin:4px 0">As opções de ambiente, lugar, escala, giro e luz valem só para montar a sala; depois, o que vale é o arquivo. Imagens e vídeo usam a câmera e a luz salvas nele. No Blender: <b>G</b> move, <b>R</b> gira, <b>S</b> muda o tamanho, <b>Ctrl+S</b> salva. Ao fechar, o app usa o arquivo salvo.</p>
+         <div class="row"><button id="slopen" class="pri sm" ${s.aberto || ocupado ? 'disabled' : ''}>Abrir sala no Blender</button>
+           <button id="slredo" class="ghost sm" ${s.aberto || ocupado ? 'disabled' : ''} title="Cria a sala de novo com as opções acima. O arquivo atual fica guardado como sala-anterior.">Refazer a sala do zero</button></div>
+         <div class="row" style="margin-top:6px"><label>Adicionar móvel do catálogo (Poly Haven, CC0)
+             <select id="slcat"><option value="furniture">Móveis</option><option value="decorative">Decoração</option><option value="plants">Plantas</option><option value="lighting">Luminárias</option><option value="shelves">Prateleiras</option><option value="electronics">Eletrônicos</option></select></label>
+           <select id="slitem" aria-label="Móvel"><option value="">carregando…</option></select><button id="sladd" class="sm" ${s.aberto || ocupado ? 'disabled' : ''}>Adicionar à sala</button></div>
+         <div class="row" style="margin-top:6px"><label>Importar meus modelos (.glb, .stl, .3mf, .blend) <input id="slimp" type="file" accept=".glb,.gltf,.stl,.3mf,.blend"></label></div>
+         <p class="mut" style="margin:4px 0">${s.objetos.length ? 'Na sala: ' + s.objetos.map(o => esc(o.id)).join(', ') + '.' : ''} O que você adiciona aparece no chão, à frente da câmera; abra o Blender para posicionar.</p>
+         <span id="slbmsg" class="mut">${j && j.kind === 'sala' ? esc(j.msg) : ''}</span>`;
+    const msg = t => { $('slbmsg').textContent = t; };
+    if ($('slmake')) $('slmake').onclick = async () => { const r = await post('/api/cena/sala/gerar', {id: c.id, cena: this.get(), refazer: false}); if (r.error) return toast(r.error); msg('Montando a sala…'); this.poll(c); };
+    if ($('slredo')) $('slredo').onclick = async () => { if (!confirm('Criar a sala de novo? O arquivo atual fica guardado como sala-anterior.')) return;
+      const r = await post('/api/cena/sala/gerar', {id: c.id, cena: this.get(), refazer: true}); if (r.error) return toast(r.error); this.poll(c); };
+    if ($('slopen')) $('slopen').onclick = async () => { const r = await post('/api/cena/sala/abrir', {id: c.id}); if (r.error) return toast(r.error); toast('Abrindo o Blender…'); setTimeout(() => this.poll(c), 1500); };
+    if ($('slcat')) {
+      const fill = async () => { const r = await (await fetch('/api/cena/catalogo?cat=' + $('slcat').value)).json();
+        $('slitem').innerHTML = r.error ? `<option value="">${esc(r.error)}</option>` : r.itens.map(i => `<option value="${esc(i.id)}">${esc(i.nome)}${i.dimensoes_mm.length ? ' (' + i.dimensoes_mm.slice(0, 3).join('×') + ' mm)' : ''}</option>`).join(''); };
+      $('slcat').onchange = fill; fill();
+      $('sladd').onclick = async () => { if (!$('slitem').value) return; const r = await post('/api/cena/sala/adicionar', {id: c.id, itens: [{fonte: 'polyhaven:' + $('slitem').value}]}); if (r.error) return toast(r.error); msg('Baixando e adicionando…'); this.poll(c); };
+      $('slimp').onchange = async e => { const f = e.target.files[0]; if (!f) return; msg('Enviando o modelo…');
+        const up = await (await fetch(`/api/cena/sala/importar?id=${c.id}&name=${encodeURIComponent(f.name)}`, {method: 'POST', body: f})).json(); if (up.error) return toast(up.error);
+        const r = await post('/api/cena/sala/adicionar', {id: c.id, itens: [{fonte: up.fonte}]}); if (r.error) return toast(r.error); this.poll(c); };
+    }
+    if (s.aberto) { clearTimeout(this.tb); this.tb = setTimeout(() => this.blend(c), 4000); }  // quando o Blender fecha, o estado volta sozinho
   },
   poll(c) {
     clearTimeout(this.t);
     const go = async () => { const d = await (await fetch('/api/cena?id=' + c.id)).json(), j = d.job; if (!$('slmsg')) return;
       if (j && j.status === 'running') { $('slmsg').textContent = j.msg; this.t = setTimeout(go, 3000); return; }
+      this.blend(c);
       if (j) { $('slmsg').textContent = j.msg; if (j.status === 'ok') { if (j.kind === 'video') { const v = $('slvideo'); v.style.display = ''; v.src = `/products/${c.id}/cena/video.mp4?t=${Date.now()}`; } load(); } } };
     go();
   },

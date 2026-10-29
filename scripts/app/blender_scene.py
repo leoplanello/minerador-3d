@@ -10,6 +10,9 @@ from pathlib import Path
 import bpy
 from mathutils import Matrix, Quaternion, Vector
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import blender_blend as bb  # noqa: E402  (a sala editável: cada móvel vira um objeto só)
+
 model, outdir, cfgfile, engine = sys.argv[sys.argv.index("--") + 1:][:4]
 cfg = json.load(open(cfgfile, encoding="utf-8"))
 color = cfg["color"]
@@ -18,6 +21,7 @@ ctx_kind = cfg["contexto"]  # "parede" ou "mesa" (render.py já resolveu o "auto
 bpy.ops.wm.read_factory_settings(use_empty=True)
 bpy.ops.wm.stl_import(filepath=model)
 obj = bpy.context.selected_objects[0]
+obj.name = "modelo-original"  # o nome do arquivo (ex.: "peca") ficaria com o do objeto "peca" da sala editável
 bpy.context.view_layer.objects.active = obj
 bpy.ops.object.shade_smooth_by_angle(angle=math.radians(35))  # cantos vivos ficam vivos, curvas ficam lisas
 
@@ -203,24 +207,12 @@ def tex_material(name, folder, tile, axes, tint=None, wash=0.0):
     return m
 
 
-def furniture(asset, x, y, rot_deg, z=0.0):
-    """Importa um modelo glTF do Poly Haven (metros) para a cena em mm, com o centro em (x, y) e a base em z. Devolve os objetos criados."""
+def furniture(asset, x, y, rot_deg, z=0.0, tipo="movel"):
+    """Importa um modelo glTF do Poly Haven (metros) para a cena em mm, como um objeto só, com o centro em (x, y) e a base em z. Devolve os objetos criados."""
     before = set(bpy.data.objects)
     bpy.ops.import_scene.gltf(filepath=str(PH / asset / f"{asset}.gltf"))
-    new = [o for o in bpy.data.objects if o not in before]
-    grp = bpy.data.objects.new(asset, None)
-    bpy.context.collection.objects.link(grp)
-    for o in new:
-        if o.parent is None:
-            o.parent = grp
-    grp.scale = (1000, 1000, 1000)
-    grp.rotation_euler.z = math.radians(rot_deg)
-    bpy.context.view_layer.update()
-    pts = [o.matrix_world @ Vector(c) for o in new if o.type == "MESH" for c in o.bound_box]
-    lo_, hi_ = Vector((min(p[i] for p in pts) for i in range(3))), Vector((max(p[i] for p in pts) for i in range(3)))
-    grp.location += Vector((x - (lo_.x + hi_.x) / 2, y - (lo_.y + hi_.y) / 2, z - lo_.z))
-    bpy.context.view_layer.update()
-    return new + [grp], hi_.z - lo_.z + z
+    o, altura = bb.juntar([n for n in bpy.data.objects if n not in before], asset, 1000, x, y, z, rot_deg, tipo, f"polyhaven:{asset}")
+    return [o], altura + z
 
 
 def solid(name, color, rough=0.5, metal=0.0):
@@ -394,14 +386,19 @@ def room_scene():
     sup, sup_top = furniture(sa, sx, sy, sr)
     ctx.extend(sup)
     for asset, x, rot in S["items"]:  # objetos de vida real sobre o móvel, fora do foco
-        o, _ = furniture(asset, x, sy, rot, z=sup_top)
+        o, _ = furniture(asset, x, sy, rot, z=sup_top, tipo="decor")
         ctx.extend(o)
     for asset, x, y, rot in S["extras"]:
         o, _ = furniture(asset, x, y, rot)
         ctx.extend(o)
     C = cfg.get("cena")
     if C:
+        obj_ctx.name, obj_ctx["m3d_tipo"], obj_ctx["m3d_fonte"] = "peca", "peca", "produto"
         extra, refs = place_custom(C, sup_top, sy)
+        for o in refs:
+            o["m3d_tipo"] = "referencia"
+        for o in extra + [w for w in ctx if w.name.endswith("-sala")]:
+            o["m3d_tipo"] = "estrutura"
         ctx.extend(extra + refs)  # a tábua da prateleira só decora: o enquadramento mede a peça e o objeto de referência
         legs, props = [obj_ctx], refs
         clo, chi = bounds(obj_ctx)
@@ -498,6 +495,7 @@ if PH:
     for loc, size_xy, watts, col in (((-2400, -1500, LUZ[2]), (1500, 1900), 5200 * k, LUZ[1]), ((2200, -2600, 900), (2400, 1400), 480 * k * (0.25 if LUZ[3] < 1 else 1), (0.85, 0.9, 1.0))):
         bpy.ops.object.light_add(type="AREA", location=loc)
         lt = bpy.context.object
+        lt.name = "luz-janela" if loc[0] < 0 else "luz-preenchimento"
         lt.data.shape, lt.data.size, lt.data.size_y = "RECTANGLE", size_xy[0], size_xy[1]
         lt.data.energy, lt.data.color = watts * 1000, col
         aim(lt, target)
@@ -505,6 +503,7 @@ if PH:
     if (cfg.get("cena") or {}).get("luz") == "noite":  # à noite a luz vem de um abajur ao lado da peça
         bpy.ops.object.light_add(type="POINT", location=target + Vector((-650, -750, 650)))
         lamp = bpy.context.object
+        lamp.name = "abajur"
         lamp.data.energy, lamp.data.color, lamp.data.shadow_soft_size = 3.2e5, (1.0, 0.72, 0.45), 60
         ctx.append(lamp)
 else:
@@ -605,5 +604,23 @@ for i, (name, az, el, zoom, *rest) in enumerate(cfg["views"], 1):
         cam.data.shift_y = 0
     cam.data.dof.use_dof = in_use  # fundo desfocado dá a cara de foto de ambiente
     cam.data.dof.focus_distance = (cam.location - focus).length
+    if cfg.get("salvar"):  # sala editável: guarda a câmera no arquivo em vez de renderizar
+        saved = cam.copy()
+        saved.data = cam.data.copy()
+        saved.name = f"cam-{name}"
+        scene.collection.objects.link(saved)
+        continue
     scene.render.filepath = f"{outdir}/render_{i}.jpg"
     bpy.ops.render.render(write_still=True)
+
+if cfg.get("salvar"):  # sem o estúdio, a peça original e a câmera de trabalho; tudo visível; texturas e HDRI empacotados no arquivo
+    for o in studio + [obj, cam]:
+        bpy.data.objects.remove(o, do_unlink=True)
+    for o in ctx:
+        o.hide_render = False
+    scene.world = world_ctx
+    scene.view_settings.view_transform = "AgX"
+    scene.camera = bpy.data.objects["cam-cena"]
+    scene.render.engine = "BLENDER_EEVEE_NEXT"
+    bpy.ops.file.pack_all()
+    bpy.ops.wm.save_as_mainfile(filepath=cfg["salvar"], compress=True)

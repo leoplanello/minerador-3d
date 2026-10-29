@@ -84,7 +84,7 @@ def ensure(root=ROOT, get=_get, fetch=_fetch):
     root.mkdir(parents=True, exist_ok=True)
     reg_path = root / "registry.json"
     reg = json.loads(reg_path.read_text(encoding="utf-8")) if reg_path.is_file() else {}
-    reg = {a: v for a, v in reg.items() if a in ASSETS}  # tira do registro o que saiu da lista
+    # o registro também guarda os móveis do catálogo da sala virtual (sala.baixar_modelo): não se tira nada dele aqui
     for asset, (kind, use) in ASSETS.items():
         if asset in reg and all((root / asset / f["path"]).is_file() for f in reg[asset]["files"]):
             continue

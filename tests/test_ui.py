@@ -423,3 +423,31 @@ def test_dropdown_de_perfis_tem_adicionar_como_ultima_opcao(gui, monkeypatch, tm
         assert abertos and page.input_value("#profile") == "user2"
         assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
         b.close()
+
+
+def test_sala_editavel_no_cartao_da_sala_virtual(gui, monkeypatch, tmp_path):
+    estado = dict(existe=False, tamanho_mb=0, aberto=False, salvo_em=None, objetos=[], modelos=[])
+    monkeypatch.setattr(server.sala, "estado", lambda lid, d: dict(estado))
+    monkeypatch.setattr(server.sala, "catalogo", lambda cat="furniture", get=None: [dict(id="armchair_01", nome="Poltrona", categorias=["furniture"], dimensoes_mm=[848, 900, 1000])])
+    with playwright.sync_playwright() as p:
+        b = p.chromium.launch(channel="chrome")
+        page = b.new_page(viewport={"width": 1280, "height": 800})
+        page.goto(f"{gui}/#/producao/2")
+        page.wait_for_selector("#slmake")
+        assert "Montar a sala para editar" in page.inner_text("#slblend") and page.is_enabled("#sl_ambiente")
+        estado.update(existe=True, tamanho_mb=9.2, salvo_em="2026-10-28T20:15:00", objetos=[dict(id="peca", tipo="peca"), dict(id="wooden_table_02", tipo="movel")])
+        page.goto(f"{gui}/#/producao/1")
+        page.goto(f"{gui}/#/producao/2")
+        page.wait_for_selector("#slopen")
+        txt = page.inner_text("#slblend")
+        assert "Abrir sala no Blender" in txt and "Refazer a sala do zero" in txt and "Ctrl+S" in txt and "wooden_table_02" in txt and "9.2 MB" in txt
+        assert page.is_disabled("#sl_ambiente")  # depois de montada, o que vale é o arquivo
+        page.wait_for_selector("#slitem option[value=armchair_01]", state="attached")
+        assert page.is_enabled("#sladd") and page.is_enabled("#slimp")
+        assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
+        estado.update(aberto=True)
+        page.goto(f"{gui}/#/producao/1")
+        page.goto(f"{gui}/#/producao/2")
+        page.wait_for_selector("#slopen")
+        assert page.is_disabled("#slopen") and page.is_disabled("#sladd") and "salve (Ctrl+S) e feche" in page.inner_text("#slblend")
+        b.close()

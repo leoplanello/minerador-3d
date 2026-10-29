@@ -182,6 +182,103 @@ def render_cena(model, outdir, cena, preview=False, title=""):
     return files[0]
 
 
+BLEND_SCRIPT = RESOURCES / "scripts" / "app" / "blender_blend.py"
+BLEND_VIEWS = ("cena", "cena_frontal", "cena_close")
+
+
+def _blender(args, timeout=900):
+    """Roda o Blender sem janela (headless) e levanta ValueError com o fim do log se falhar."""
+    try:
+        r = proc.run([str(BLENDER), *args], capture_output=True, text=True, timeout=timeout)
+    except proc.TimeoutExpired:
+        raise ValueError("o Blender passou do tempo limite")
+    return r
+
+
+def gerar_blend(model, blend, cena, title=""):
+    """Monta a sala virtual (ambiente, móveis, luz, peça) e a salva como sala.blend: cada móvel é um objeto separado, com 3 câmeras (3/4, frontal, close).
+    Texturas e HDRI vão empacotados dentro do arquivo, então ele abre em qualquer pasta. Devolve o caminho."""
+    if not BLENDER.exists():
+        raise ValueError("Blender não encontrado em tools/blender")
+    if not polyhaven.available():
+        raise ValueError("os ativos da sala (Poly Haven) ainda não foram baixados")
+    c = clean_cena(cena)
+    blend = Path(blend)
+    blend.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = clean_render_cfg(dict(views=["uso"], size=640, quality="rapido", background="gray", fill="perto"))
+        scene_cfg = cfg | dict(polyhaven=str(polyhaven.ROOT), views=[(v, *VIEWS[v]) for v in BLEND_VIEWS], contexto=scene_for(cfg, title), **room_cfg(cfg, title),
+                               samples_eevee=1, samples_cycles=1, dist=FILL[cfg["fill"]], still_cycles=False, salvar=str(blend))
+        scene_cfg |= cena_cfg(c)
+        cfgfile = Path(tmp) / "cfg.json"
+        cfgfile.write_text(json.dumps(scene_cfg), encoding="utf-8")
+        stl = Path(model)
+        if stl.suffix.lower() == ".3mf":
+            stl = Path(tmp) / "modelo.stl"
+            threemf_to_stl(model, stl)
+        tmp_blend = blend.with_suffix(".novo.blend")
+        scene_cfg["salvar"] = str(tmp_blend)  # só troca o arquivo bom quando o novo ficou pronto
+        cfgfile.write_text(json.dumps(scene_cfg), encoding="utf-8")
+        r = _blender(["-b", "-P", str(SCENE), "--", str(stl), str(Path(tmp)), str(cfgfile), "EEVEE"])
+        if not tmp_blend.is_file():
+            raise ValueError(f"o Blender não gerou a sala: {(r.stderr or r.stdout)[-300:]}")
+        tmp_blend.replace(blend)
+    return blend
+
+
+def blend_adicionar(blend, itens):
+    """Põe móveis e modelos na sala.blend (sem janela). itens: [{nome, caminho, tipo, fonte, x, y, z, giro}]."""
+    with tempfile.TemporaryDirectory() as tmp:
+        f = Path(tmp) / "itens.json"
+        f.write_text(json.dumps(itens), encoding="utf-8")
+        r = _blender(["-b", str(blend), "-P", str(BLEND_SCRIPT), "--", "adicionar", str(f)])
+    if r.returncode != 0 or "Traceback" in (r.stderr or "") + (r.stdout or ""):
+        raise ValueError(f"o Blender não conseguiu adicionar ao arquivo: {(r.stderr or r.stdout)[-300:]}")
+
+
+def blend_layout(blend, saida):
+    """Escreve o layout em mm (id, tipo, fonte, posição, giro, escala de cada objeto) do que está na sala.blend."""
+    r = _blender(["-b", str(blend), "-P", str(BLEND_SCRIPT), "--", "exportar", str(saida)], timeout=300)
+    if not Path(saida).is_file():
+        raise ValueError(f"não consegui ler o arquivo da sala: {(r.stderr or r.stdout)[-300:]}")
+
+
+def _render_blend(blend, outdir, cfg, engine, timeout):
+    outdir.mkdir(parents=True, exist_ok=True)
+    for old in outdir.glob("render_*.jpg"):
+        old.unlink()
+    with tempfile.TemporaryDirectory() as tmp:
+        f = Path(tmp) / "cfg.json"
+        f.write_text(json.dumps(cfg), encoding="utf-8")
+        r = _blender(["-b", str(blend), "-P", str(BLEND_SCRIPT), "--", "renderizar", str(outdir), str(f), engine], timeout=timeout)
+    return r
+
+
+def render_blend(blend, outdir, camera="cena", preview=False, engine=None):
+    """Imagem da sala.blend com a câmera e a luz que estão no arquivo (a câmera: cena, cena_frontal ou cena_close). Devolve o JPG."""
+    q = QUALITY["rapido" if preview else "normal"]
+    cfg = dict(cameras=[f"cam-{camera}"], res=[640, 640] if preview else [1200, 1200], samples_eevee=q[0], samples_cycles=q[1])
+    r = _render_blend(blend, outdir, cfg, engine or ("EEVEE" if preview else "CYCLES"), 900)
+    f = outdir / "render_1.jpg"
+    if not f.is_file():
+        raise ValueError(f"o Blender não gerou a imagem: {(r.stderr or r.stdout)[-300:]}")
+    finish_photo(f)
+    return f
+
+
+def render_blend_frames(blend, outdir, n, engine="EEVEE", res=(1080, 1920), on_time=lambda spf: None, timeout=6 * 3600):
+    """Quadros do vídeo orbital em volta do objeto 'peca' da sala.blend, na altura e distância da câmera 3/4 do arquivo."""
+    q = QUALITY["rapido"]
+    t0 = time.time()
+    cfg = dict(cameras=["cam-cena"], res=list(res), samples_eevee=q[0], samples_cycles=q[1], orbita=orbit_path(n))
+    r = _render_blend(blend, outdir, cfg, engine, timeout)
+    files = [outdir / f"render_{i}.jpg" for i in range(1, n + 1)]
+    if not all(f.is_file() for f in files):
+        raise ValueError(f"o Blender não gerou os quadros do vídeo: {(r.stderr or r.stdout)[-300:]}")
+    on_time((time.time() - t0) / n)
+    return files
+
+
 def render_images(model, outdir, cfg=None, title="", cena=None, preview=False):
     """Devolve a lista de JPGs gerados (render_1.jpg...). Tenta EEVEE e cai para Cycles (CPU) se a placa de vídeo não aceitar.
     cfg: dict de clean_render_cfg ou, por compatibilidade, só a cor '#rrggbb'. title: título do anúncio, escolhe o cenário das vistas 'em uso'."""
