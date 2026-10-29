@@ -618,7 +618,7 @@ def run_model_search(lid, q, profile, sites, headless=None, expand=True):
             job["results"] += r
             job["notes"] += n
         elif browser:
-            job["notes"].append("MakerWorld e Thingiverse precisam de um perfil do Chrome escolhido no topo da tela")
+            job["notes"].append("MakerWorld e Thingiverse precisam de um perfil do Chrome escolhido no topo da tela (ou o botão Adicionar perfil)")
         job["results"].sort(key=lambda r: list(model_search.SITES).index(r["source"]))  # MakerWorld primeiro
         if not job["results"] and not job["notes"]:
             job["notes"].append("nenhum modelo achado; os sites estão em inglês, use “Sugerir termos”")
@@ -1536,7 +1536,7 @@ class H(BaseHTTPRequestHandler):
                     get_printables_model(lid, str(data["model_id"]), str(data["file_id"]), str(data.get("title", "")), str(data.get("url", "")), str(data.get("license", "")), model_info(data))
                 else:
                     if not profile:
-                        raise ValueError("escolha um perfil do Chrome no topo da tela")
+                        raise ValueError("escolha um perfil do Chrome no topo da tela ou use o botão Adicionar perfil")
                     threading.Thread(target=run_model_capture, args=(lid, str(data["url"]), profile, str(data.get("license", "")), str(data.get("source", ""))), daemon=True).start()
             except (ValueError, TypeError, KeyError) as e:
                 return self._json(dict(error=str(e)), 400)

@@ -32,7 +32,10 @@
 <header class="top">
   <a class="brand" href="#/resumo"><img src="/static/logo.svg" alt="">Minerador 3D</a>
   <div class="search"><svg class="ic"><use href="#i-search"/></svg><input id="q" type="search" placeholder="Buscar produto ou loja" aria-label="Buscar produto ou loja"></div>
-  <select id="profile" aria-label="Perfil do Chrome" title="Perfil do Chrome com login usado para ler as lojas"></select>
+  <select id="profile" hidden aria-hidden="true"></select>
+  <div id="profbox" class="profbox"><button id="profbig" class="pri" hidden>Adicionar perfil</button>
+    <button id="profbtn" class="profbtn" aria-haspopup="true" aria-expanded="false" title="Perfil do Chrome com login usado para ler as lojas"></button>
+    <div id="profpop" class="profpop" hidden></div></div>
   <div id="status" class="status idle" role="status" aria-live="polite"><span class="dot"></span><span>Parado</span></div>
   <button id="restart" class="topbtn" title="Fecha o app e abre de novo, já com as últimas alterações"><svg class="ic"><use href="#i-refresh"/></svg>Atualizar</button>
 </header>

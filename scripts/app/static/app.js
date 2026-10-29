@@ -26,15 +26,15 @@ async function load() {
 }
 
 async function addStores(urls) {
-  if (!$('profile').value) return toast('Escolha um perfil do Chrome primeiro');
-  const r = await post('/api/stores', {urls, profile: $('profile').value});
+  if (!$('profile').value) return PERFIS.dialog();
+  const r = await post('/api/stores',{urls, profile: $('profile').value});
   if (r.error) return toast(r.error);
   toast(r.added ? `${r.added} loja(s) na fila. O Chrome vai abrir.` : 'Essas lojas já estão na fila');
   if ($('urls')) { $('urls').value = ''; onUrls(); }
   load();
 }
 async function refreshInfo(id) {
-  if (!$('profile').value) return toast('Escolha um perfil do Chrome primeiro');
+  if (!$('profile').value) return PERFIS.dialog();
   const r = await post('/api/stores/info', {id, profile: $('profile').value});
   toast(r.error || 'O Chrome vai abrir para atualizar os dados. Se pedir captcha, resolva por lá.'); setTimeout(load, 15000);
 }
@@ -84,7 +84,7 @@ const VIEWS = {
   },
   config: {
     mount: () => `<div class="card"><h2>Entrar nas contas (Chrome)</h2>
-        <p class="small mut" style="margin-top:0">Abre o Chrome normal, sem automação, no perfil escolhido no topo da tela. Entre com e-mail, telefone ou <b>Google</b> e depois <b>feche a janela</b>: o app reaproveita o login nas leituras e nas buscas. Com essa janela aberta o app não consegue usar o perfil.</p>
+        <p class="small mut" style="margin-top:0">Abre o Chrome normal, sem automação, no perfil escolhido no topo da tela (sem perfil ainda, use o botão "Adicionar perfil"). Entre com e-mail, telefone ou <b>Google</b> e depois <b>feche a janela</b>: o app reaproveita o login nas leituras e nas buscas. Com essa janela aberta o app não consegue usar o perfil.</p>
         <div class="row">${[['Mercado Livre', 'https://www.mercadolivre.com.br/'], ['MakerWorld', 'https://makerworld.com/'],
           ['Printables', 'https://www.printables.com/'], ['Thingiverse', 'https://www.thingiverse.com/']].map(([n, u]) => `<button data-login="${u}">${ic('store')}${n}</button>`).join('')}</div></div>
       <div class="card"><h2>Custos e taxas</h2>
@@ -197,7 +197,7 @@ const VIEWS = {
             <label><input type="checkbox" data-msite="printables" checked> Printables</label><label><input type="checkbox" data-msite="thingiverse" checked> Thingiverse</label>
             <span>(MakerWorld e Thingiverse abrem o Chrome do perfil escolhido no topo)</span></div>
           <div class="row small" style="margin:6px 0"><label class="chk"><input type="checkbox" id="mshow" checked> Mostrar o navegador durante a busca</label>
-            <span class="mut">Desligado, o Chrome roda escondido (headless). Ligado, você acompanha a busca na janela e resolve verificações. Precisa de um perfil escolhido no topo.</span></div>
+            <span class="mut">Desligado, o Chrome roda escondido (headless). Ligado, você acompanha a busca na janela e resolve verificações. Precisa de um perfil: escolha no topo ou use "Adicionar perfil" se ainda não tem nenhum.</span></div>
           <div class="row small" style="margin:6px 0"><button id="mterms" class="sm ghost">Sugerir termos em inglês</button><span id="mchips" class="chips"></span></div>
           <p id="msmsg" class="small mut" style="margin:4px 0"></p><div id="msres" class="mres"></div></div>
         <div class="form">
@@ -641,11 +641,7 @@ function go() {
 
 function update() {
   if (DND.dragging) return;  // redesenhar no meio do arraste soltaria o cartão
-  const sel = $('profile');
-  if (sel.options.length !== S.profiles.length) {
-    const saved = store('profile');
-    sel.innerHTML = S.profiles.map(p => `<option ${p === saved ? 'selected' : ''}>${esc(p)}</option>`).join('');
-  }
+  PERFIS.menu();
   const needs = S.stores.filter(s => s.status === 'captcha'), errs = S.stores.filter(s => s.status === 'error');
   const running = S.stores.find(s => s.status === 'running'), queued = S.stores.filter(s => s.status === 'pending').length;
   const toReview = S.candidates.filter(c => c.status === 'new').length;
@@ -683,7 +679,7 @@ function enhance() {
   }
 }
 
-$('profile').onchange = e => { store('profile', e.target.value); toast('Perfil: ' + e.target.value); };
+$('profile').onchange = e => { store('profile', e.target.value); toast('Perfil: ' + e.target.value); PERFIS.menu(true); };
 $('q').oninput = () => { if (route[0] !== 'produtos') location.hash = '#/produtos'; else update(); };
 document.body.addEventListener('click', e => {
   const r = e.target.closest('[data-rerun]'); if (r) return addStores([r.dataset.rerun]);

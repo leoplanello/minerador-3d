@@ -369,3 +369,57 @@ def test_sala_virtual_na_tela_do_produto(gui):
         assert "Cycles" in page.inner_text("#slest")
         assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
         b.close()
+
+
+def _perfis_do_app(monkeypatch, tmp_path, nomes):
+    import perfis
+    monkeypatch.setattr(server, "list_profiles", lambda: list(nomes))
+    monkeypatch.setattr(perfis, "CHROME_USER_DATA", tmp_path / "sem-chrome")
+    monkeypatch.setattr(perfis, "PROFILES_DIR", tmp_path / "perfis-app")
+    abertos = []
+    monkeypatch.setattr(perfis, "proc", type("P", (), {"popen": staticmethod(lambda cmd, **kw: abertos.append(cmd) or type("F", (), {"wait": lambda self: None})())}))
+    monkeypatch.setattr(perfis, "chrome_path", lambda: "chrome.exe")
+    return abertos
+
+
+@pytest.mark.parametrize("viewport", [{"width": 1280, "height": 800}, {"width": 390, "height": 800}])
+def test_sem_perfil_mostra_botao_grande_de_adicionar(gui, monkeypatch, tmp_path, viewport):
+    abertos = _perfis_do_app(monkeypatch, tmp_path, [])
+    with playwright.sync_playwright() as p:
+        b = p.chromium.launch(channel="chrome")
+        page = b.new_page(viewport=viewport)
+        page.goto(f"{gui}/#/lojas")
+        page.wait_for_selector("#profbig:not([hidden])")
+        assert page.is_hidden("#profbtn") and page.is_hidden("#profile")
+        page.click("#profbig")
+        page.fill("#pdnick", "Loja nova")
+        page.click("#pdok")
+        page.wait_for_timeout(800)
+        assert abertos and (tmp_path / "perfis-app" / "Minerador 3D - Loja nova").is_dir()
+        assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
+        b.close()
+
+
+def test_dropdown_de_perfis_tem_adicionar_como_ultima_opcao(gui, monkeypatch, tmp_path):
+    abertos = _perfis_do_app(monkeypatch, tmp_path, ["user1", "user2"])
+    with playwright.sync_playwright() as p:
+        b = p.chromium.launch(channel="chrome")
+        page = b.new_page(viewport={"width": 1280, "height": 800})
+        page.goto(f"{gui}/#/lojas")
+        page.wait_for_selector("#profbtn:not([hidden])")
+        assert page.is_hidden("#profbig") and page.inner_text("#profbtn").strip().startswith("user1")
+        page.click("#profbtn")
+        opcoes = page.locator("#profpop button").all_inner_texts()
+        assert opcoes == ["user1", "user2", "+ Adicionar perfil"]
+        page.click("#profpop button >> text=user2")
+        assert page.evaluate("localStorage.getItem('profile')") == "user2" and page.input_value("#profile") == "user2"
+        page.click("#profbtn")
+        page.click("#profpop .add")
+        page.wait_for_selector("#pfdlg[open]")
+        assert page.evaluate("localStorage.getItem('profile')") == "user2" and page.input_value("#profile") == "user2"  # a opção extra não vira o perfil escolhido
+        page.fill("#pdnick", "Outra")
+        page.click("#pdok")
+        page.wait_for_timeout(800)
+        assert abertos and page.input_value("#profile") == "user2"
+        assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
+        b.close()
