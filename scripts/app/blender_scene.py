@@ -335,9 +335,52 @@ def reference_object(kind, x, base_z, y):
     return []
 
 
+def pla(o):
+    """Material de PLA mate: rugosidade média, linhas de camada bem fracas (ondas de 0,3 mm no eixo Z da peça), granulação mínima no relevo e na cor."""
+    m = bpy.data.materials.new("PLA")
+    m.use_nodes = True
+    nt = m.node_tree
+    b = nt.nodes["Principled BSDF"]
+    rgb = [(int(cfg["color"][i:i + 2], 16) / 255) ** 2.2 for i in (1, 3, 5)]
+    b.inputs["Roughness"].default_value = 0.52
+    b.inputs["Specular IOR Level"].default_value = 0.35
+    tc = nt.nodes.new("ShaderNodeTexCoord")
+    wave = nt.nodes.new("ShaderNodeTexWave")
+    wave.wave_type, wave.bands_direction, wave.wave_profile = "BANDS", "Z", "SAW"
+    wave.inputs["Scale"].default_value, wave.inputs["Distortion"].default_value, wave.inputs["Detail"].default_value = 1 / 0.3, 0.5, 1.0
+    noise = nt.nodes.new("ShaderNodeTexNoise")
+    noise.inputs["Scale"].default_value, noise.inputs["Detail"].default_value = 90, 6
+    mix = nt.nodes.new("ShaderNodeMath")
+    mix.operation, mix.inputs[1].default_value = "ADD", 0.0
+    nt.links.new(tc.outputs["Object"], wave.inputs["Vector"])
+    nt.links.new(tc.outputs["Object"], noise.inputs["Vector"])
+    w2 = nt.nodes.new("ShaderNodeMath")
+    w2.operation, w2.inputs[1].default_value = "MULTIPLY", 0.7
+    n2 = nt.nodes.new("ShaderNodeMath")
+    n2.operation, n2.inputs[1].default_value = "MULTIPLY", 0.3
+    nt.links.new(wave.outputs["Fac"], w2.inputs[0])
+    nt.links.new(noise.outputs["Fac"], n2.inputs[0])
+    nt.links.new(w2.outputs[0], mix.inputs[0])
+    nt.links.new(n2.outputs[0], mix.inputs[1])
+    bump = nt.nodes.new("ShaderNodeBump")
+    bump.inputs["Strength"].default_value, bump.inputs["Distance"].default_value = 0.06, 0.1
+    nt.links.new(mix.outputs[0], bump.inputs["Height"])
+    nt.links.new(bump.outputs["Normal"], b.inputs["Normal"])
+    cmix = nt.nodes.new("ShaderNodeMixRGB")
+    cmix.blend_type = "MULTIPLY"
+    cmix.inputs["Fac"].default_value = 0.08
+    cmix.inputs["Color1"].default_value = (*rgb, 1)
+    nt.links.new(noise.outputs["Color"], cmix.inputs["Color2"])
+    nt.links.new(cmix.outputs["Color"], b.inputs["Base Color"])
+    o.data = o.data.copy()
+    o.data.materials.clear()
+    o.data.materials.append(m)
+
+
 def place_custom(C, sup_top, sy):
     """Sala virtual: coloca a peça (do produto ou enviada) onde a pessoa escolheu, na escala e no giro pedidos. Devolve (peça, objetos de referência)."""
     k = C["escala_pct"] / 100
+    pla(obj_ctx)
     obj_ctx.scale = (k, k, k)
     mode, giro = C["colocacao"], math.radians(C["giro"])
     if mode == "parede":
@@ -370,6 +413,132 @@ def place_custom(C, sup_top, sy):
     lo_, hi_ = bounds(obj_ctx)
     refs = reference_object(C["referencia"], hi_.x + 40, z, y)
     return extra, refs
+
+
+def imported_scene():
+    """Sala 3D importada (GLB ou FBX de terceiros): vira o ambiente inteiro, em mm. Procura por raycast onde a peça cabe (chão, mesa, parede ou prateleira)
+    com espaço livre para a câmera e move a SALA, não a peça, para o quadro padrão da cena (parede em y = 0 voltada para -y, piso em z = 0)."""
+    global HERO
+    S, C = cfg["sala"], cfg["cena"]
+    before = set(bpy.data.objects)
+    f = S["importada"]
+    (bpy.ops.import_scene.fbx if f.lower().endswith(".fbx") else bpy.ops.import_scene.gltf)(filepath=f)
+    new = [o for o in bpy.data.objects if o not in before]
+    meshes = [o for o in new if o.type == "MESH"]
+    lo, hi = bb.bounds(meshes)
+    k = 1000 if max(hi - lo) < 200 else 10 if max(hi - lo) < 20000 else 1  # metros, centímetros ou milímetros
+    roots = [o for o in new if o.parent is None]
+    for r in roots:
+        r.scale, r.location = r.scale * k, r.location * k
+    bpy.context.view_layer.update()
+    lo, hi = bb.bounds(meshes)
+    print(f"[sala] importada: {len(meshes)} malhas, escala x{k}, tamanho {hi.x - lo.x:.0f} x {hi.y - lo.y:.0f} x {hi.z - lo.z:.0f} mm", flush=True)
+    ctx.extend(new)
+    for o in studio + [obj, obj_ctx]:
+        o.hide_viewport = True  # a peça não entra na busca por raycast
+    bpy.context.view_layer.update()
+    dg = bpy.context.view_layer.depsgraph
+
+    def cast(p, d, dist=6000):
+        ok, loc, nor, *_ = bpy.context.scene.ray_cast(dg, Vector(p), Vector(d).normalized(), distance=dist)
+        return (loc, nor) if ok else (None, None)
+    step = max(250, math.sqrt((hi.x - lo.x) * (hi.y - lo.y) / 700))
+    grid = [(lo.x + step * (i + 0.5), lo.y + step * (j + 0.5)) for i in range(int((hi.x - lo.x) / step)) for j in range(int((hi.y - lo.y) / step))]
+    top = lo.z + 2000
+    hits = []
+    for x, y in grid:
+        loc, nor = cast((x, y, top), (0, 0, -1), 4000)
+        if loc is not None and nor.z > 0.9:
+            hits.append((loc, nor))
+    if not hits:
+        raise ValueError("não achei piso na sala importada")
+    zs = sorted(h[0].z for h in hits)
+    floor_z = zs[int(len(zs) * 0.08)]
+    print(f"[sala] piso em z={floor_z:.0f} mm; pé-direito até {hi.z - floor_z:.0f} mm; {len(hits)} pontos de apoio", flush=True)
+    cx, cy = (lo.x + hi.x) / 2, (lo.y + hi.y) / 2
+    esp = max(size * C["escala_pct"] / 100, 60)
+    need = min(3.97 * esp + 300, 3200)  # distância da câmera da cena (lente 50, peça em 35 % do quadro) mais folga
+    cams = [(math.cos(math.radians(-124)), math.sin(math.radians(-124))), (0.0, -1.0)]  # direção da câmera 3/4 e da frontal no quadro padrão
+
+    def free(p, psi):
+        """Espaço livre de p até a câmera nas duas vistas, com a sala girada por psi (graus)."""
+        c, s = math.cos(math.radians(-psi)), math.sin(math.radians(-psi))
+        out = []
+        for dx, dy in cams:
+            d = (dx * c - dy * s, dx * s + dy * c, 0.15)
+            loc, _ = cast(p, d, 3400)
+            out.append(3400 if loc is None else (loc - Vector(p)).length)
+        return min(out)
+
+    def flat_down(x, y, z, tol=8):
+        return all((lambda r: r[0] is not None and abs(r[0].z - z) < tol)(cast((x + dx, y + dy, z + 300), (0, 0, -1), 600)) for dx, dy in ((100, 0), (-100, 0), (0, 100), (0, -100)))
+    modo = C["colocacao"]
+    best = None  # (pontuação, ponto alvo, psi, parede)
+    if modo in ("mesa", "chao"):
+        alvo = (600, 950) if modo == "mesa" else (-30, 30)
+        for loc, nor in hits:
+            if not alvo[0] <= loc.z - floor_z <= alvo[1] or not flat_down(loc.x, loc.y, loc.z):
+                continue
+            if cast((loc.x, loc.y, loc.z + 15), (0, 0, 1), 700)[0] is not None and modo == "mesa":
+                continue
+            for psi in range(0, 360, 45):
+                fr = free((loc.x, loc.y, loc.z + 200), psi)
+                sc = min(fr, need) * 1000 - math.hypot(loc.x - cx, loc.y - cy)
+                if best is None or sc > best[0]:
+                    best = (sc, loc, psi, None)
+    else:  # parede e prateleira: um trecho liso de parede com espaço na frente
+        dirs = [(math.cos(math.radians(a)), math.sin(math.radians(a))) for a in range(0, 360, 45)]
+        for loc, nor in hits:
+            if abs(loc.z - floor_z) > 30:
+                continue
+            for dx, dy in dirs:
+                w, wn = cast((loc.x, loc.y, floor_z + 1250), (dx, dy, 0), 5000)
+                if w is None or abs(wn.z) > 0.25 or wn.x * dx + wn.y * dy > -0.8:
+                    continue
+                lat = (-dy, dx)
+                ok = all((lambda r: r[0] is not None and abs((r[0] - w).dot(Vector((dx, dy, 0)))) < 20)(cast((loc.x + lat[0] * a, loc.y + lat[1] * a, floor_z + 1250 + b), (dx, dy, 0), 5000))
+                         for a, b in ((250, 0), (-250, 0), (0, 250), (0, -250)))
+                if not ok:
+                    continue
+                psi = -90 - math.degrees(math.atan2(wn.y, wn.x))
+                fr = free((w.x + wn.x * 80, w.y + wn.y * 80, floor_z + 1250), psi)
+                sc = min(fr, need) * 1000 - math.hypot(w.x - cx, w.y - cy)
+                if best is None or sc > best[0]:
+                    best = (sc, w, psi, True)
+    if best is None:
+        raise ValueError("não achei um lugar livre nessa sala para " + {"mesa": "pôr a peça sobre um móvel", "chao": "pôr a peça no chão", "parede": "fixar a peça na parede", "prateleira": "pôr a prateleira"}[modo])
+    _, S0, psi, wall = best
+    print(f"[sala] peça em ({S0.x:.0f}, {S0.y:.0f}, {S0.z - floor_z:.0f}) mm, giro da sala {psi:.0f} graus, modo {modo}", flush=True)
+    y0 = 0 if wall else (-300 if modo == "mesa" else -750)
+    M = Matrix.Translation((0, y0, 0)) @ Matrix.Rotation(math.radians(psi), 4, "Z") @ Matrix.Translation((-S0.x, -S0.y, -floor_z))
+    for r in roots:
+        r.matrix_world = M @ r.matrix_world
+    for o in studio + [obj, obj_ctx]:
+        o.hide_viewport = False
+    bpy.context.view_layer.update()
+    sup_top = (S0.z - floor_z) if modo == "mesa" else 0
+    # a sala inteira passa de 20 milhões de vértices e derrubava o EEVEE: o que está longe do foco entra simplificado (o que aparece de perto fica quase inteiro)
+    foco = Vector((0, y0, sup_top))
+    for o in meshes:
+        n = len(o.data.vertices)
+        olo, ohi = bb.bounds([o])
+        lim = 150000 if ((olo + ohi) / 2 - foco).length < 1200 else 30000
+        if n > lim:
+            md = o.modifiers.new("simplificar", "DECIMATE")
+            md.ratio = lim / n
+    obj_ctx.name, obj_ctx["m3d_tipo"], obj_ctx["m3d_fonte"] = "peca", "peca", "produto"
+    extra, refs = place_custom(C, sup_top, y0)
+    for o in refs:
+        o["m3d_tipo"] = "referencia"
+    for o in extra:
+        o["m3d_tipo"] = "estrutura"
+    ctx.extend(extra + refs)
+    HERO = [obj_ctx] + refs
+    nt = world_ctx.node_tree
+    nt.nodes["Background"].inputs["Color"].default_value = (0.95, 0.93, 0.9, 1)
+    nt.nodes["Background"].inputs["Strength"].default_value = 0.45 * LUZ[0]  # luz de ambiente: o interior fechado não recebe o céu
+    pts = [o.matrix_world @ Vector(c) for o in HERO if o.type == "MESH" for c in o.bound_box]
+    return (Vector((min(p[i] for p in pts) for i in range(3))) + Vector((max(p[i] for p in pts) for i in range(3)))) / 2
 
 
 def room_scene():
@@ -463,8 +632,9 @@ def room_scene():
 HERO = []
 wall_m, wall_b = make_mat("parede", 0.95)
 procedural(wall_m, wall_b, 400, [(0.55, 0.50, 0.44), (0.64, 0.59, 0.52)], kind="NOISE", bump=0.05)
+IMP = (cfg.get("sala") or {}).get("importada") if PH else None
 if PH:
-    target = room_scene()
+    target = imported_scene() if IMP else room_scene()
 elif ctx_kind == "parede":
     # a face de trás encosta na parede (y = 0); o maior lado restante fica na vertical
     up_ax = max((i for i in range(3) if i != back_ax), key=lambda i: dims0[i])
@@ -490,12 +660,28 @@ else:
     target = center
 
 # luz: na sala, uma janela de área suave e quente (do lado esquerdo da câmera) mais um preenchimento fraco; no cenário simples, sol com caixilho de sombra
-if PH:
+if IMP:  # sala importada: luz de área suave do lado da câmera (o interior é fechado e a câmera fica dentro dele) mais o ambiente do mundo
+    k = {"soft": 0.6, "normal": 1.0, "strong": 1.5}[cfg["light"]] * LUZ[3]
+    for loc, size_xy, watts, col in (((-900, -1500, 1500), (1500, 1500), 2400 * k, LUZ[1]), ((900, -1100, 1900), (1800, 1800), 700 * k, (0.9, 0.93, 1.0))):
+        bpy.ops.object.light_add(type="AREA", location=target + Vector(loc))
+        lt = bpy.context.object
+        lt.name = "Luz da janela" if loc[0] < 0 else "Luz de apoio"
+        lt.data.shape, lt.data.size, lt.data.size_y = "RECTANGLE", size_xy[0], size_xy[1]
+        lt.data.energy, lt.data.color = watts * 1000, col
+        aim(lt, target)
+        ctx.append(lt)
+    if (cfg.get("cena") or {}).get("luz") == "noite":
+        bpy.ops.object.light_add(type="POINT", location=target + Vector((-650, -750, 650)))
+        lamp = bpy.context.object
+        lamp.name = "Abajur"
+        lamp.data.energy, lamp.data.color, lamp.data.shadow_soft_size = 3.2e5, (1.0, 0.72, 0.45), 60
+        ctx.append(lamp)
+elif PH:
     k = {"soft": 0.6, "normal": 1.0, "strong": 1.5}[cfg["light"]] * LUZ[3]
     for loc, size_xy, watts, col in (((-2400, -1500, LUZ[2]), (1500, 1900), 5200 * k, LUZ[1]), ((2200, -2600, 900), (2400, 1400), 480 * k * (0.25 if LUZ[3] < 1 else 1), (0.85, 0.9, 1.0))):
         bpy.ops.object.light_add(type="AREA", location=loc)
         lt = bpy.context.object
-        lt.name = "luz-janela" if loc[0] < 0 else "luz-preenchimento"
+        lt.name = "Luz da janela" if loc[0] < 0 else "Luz de apoio"
         lt.data.shape, lt.data.size, lt.data.size_y = "RECTANGLE", size_xy[0], size_xy[1]
         lt.data.energy, lt.data.color = watts * 1000, col
         aim(lt, target)
@@ -503,7 +689,7 @@ if PH:
     if (cfg.get("cena") or {}).get("luz") == "noite":  # à noite a luz vem de um abajur ao lado da peça
         bpy.ops.object.light_add(type="POINT", location=target + Vector((-650, -750, 650)))
         lamp = bpy.context.object
-        lamp.name = "abajur"
+        lamp.name = "Abajur"
         lamp.data.energy, lamp.data.color, lamp.data.shadow_soft_size = 3.2e5, (1.0, 0.72, 0.45), 60
         ctx.append(lamp)
 else:
@@ -543,6 +729,7 @@ if engine == "CYCLES":
     scene.cycles.device = "CPU"
     scene.cycles.use_denoising = True
     scene.cycles.denoiser = "OPENIMAGEDENOISE"
+    scene.cycles.time_limit = cfg.get("time_limit", 0)
 else:
     scene.eevee.taa_render_samples = cfg["samples_eevee"]
 scene.render.resolution_x, scene.render.resolution_y = cfg.get("res") or (cfg["size"], cfg["size"])  # "res" = [largura, altura] dos quadros do vídeo
@@ -568,6 +755,7 @@ for i, (name, az, el, zoom, *rest) in enumerate(cfg["views"], 1):
     if in_use and cfg.get("still_cycles", True) and engine != "CYCLES":  # as fotos "em uso" saem em Cycles com denoiser; o estúdio é rápido no EEVEE
         scene.render.engine = "CYCLES"
         scene.cycles.samples = cfg["samples_cycles"]
+        scene.cycles.time_limit = cfg.get("time_limit", 0)
         scene.cycles.device = "CPU"
         scene.cycles.use_denoising = True
         scene.cycles.denoiser = "OPENIMAGEDENOISE"
@@ -616,10 +804,20 @@ for i, (name, az, el, zoom, *rest) in enumerate(cfg["views"], 1):
 if cfg.get("salvar"):  # sem o estúdio, a peça original e a câmera de trabalho; tudo visível; texturas e HDRI empacotados no arquivo
     for o in studio + [obj, cam]:
         bpy.data.objects.remove(o, do_unlink=True)
+    luzes = bpy.data.collections.new("Luzes")  # as luzes ficam juntas, com nomes claros, para o painel Minerador e para quem for mexer nelas
+    scene.collection.children.link(luzes)
     for o in ctx:
         o.hide_render = False
+        if o.type == "LIGHT":
+            for c in o.users_collection:
+                c.objects.unlink(o)
+            luzes.objects.link(o)
     scene.world = world_ctx
     scene.view_settings.view_transform = "AgX"
+    for o in bpy.data.objects:  # a peça nasce selecionada, pronta para G, R e S
+        o.select_set(False)
+    bpy.context.view_layer.objects.active = bpy.data.objects["peca"]
+    bpy.data.objects["peca"].select_set(True)
     scene.camera = bpy.data.objects["cam-cena"]
     scene.render.engine = "BLENDER_EEVEE_NEXT"
     bpy.ops.file.pack_all()

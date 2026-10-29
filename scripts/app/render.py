@@ -2,6 +2,7 @@
 import json
 import re
 import polyhaven
+import salas
 import proc
 import tempfile
 import time
@@ -63,6 +64,7 @@ VIEWS = {"frente": (35, 28, 1.0), "lado": (125, 22, 1.0), "cima": (-50, 55, 1.0)
 VIEW_LABELS = {"frente": "Frente 3/4", "lado": "Lado", "cima": "De cima", "tras": "Trás 3/4", "frontal": "Frontal", "topo": "Topo", "perfil": "Perfil", "detalhe": "Detalhe (zoom)",
                "uso": "Em uso (com o objeto)", "uso_perto": "Em uso, detalhe de perto", "uso_medio": "Ambiente médio", "uso_aberto": "Ambiente aberto"}
 QUALITY = {"rapido": (16, 12), "normal": (32, 24), "alta": (64, 64)}  # amostras EEVEE, Cycles
+CENA_FINAL_AMOSTRAS = 128  # imagem final da sala virtual
 FILL = {"perto": 2.4, "medio": 3.2, "longe": 3.8}  # distância da câmera em tamanhos da peça: quanto menor, mais a peça enche a imagem
 RENDER_DEFAULT = dict(color="#3a3a3a", finish="matte", background="white", views=["frente", "uso_perto", "uso", "uso_medio", "uso_aberto"], size=1200,
                       quality="normal", light="normal", shadow=True, fill="medio", turn=0, contexto="auto", ambiente="auto")
@@ -135,8 +137,8 @@ def scene_for(cfg, title=""):
     return "parede" if "parede" in t or "wall" in t or (any(w in t for w in WALL_WORDS) and "mesa" not in t and "bancada" not in t) else "mesa"
 
 
-CENA_DEFAULT = dict(ambiente="sala", colocacao="mesa", escala_pct=100, giro=0, referencia="nenhuma", camera="3/4", luz="dia", modelo="produto")
-CENA_CHOICES = dict(ambiente=tuple(polyhaven.ROOMS), colocacao=("chao", "mesa", "parede", "prateleira"), referencia=("nenhuma", "moeda", "caneca", "celular"),
+CENA_DEFAULT = dict(ambiente="sala", colocacao="mesa", escala_pct=100, giro=0, referencia="nenhuma", camera="3/4", luz="dia", modelo="produto", limite_s=600)
+CENA_CHOICES = dict(ambiente=tuple(polyhaven.ROOMS) + tuple(salas.SALAS), colocacao=("chao", "mesa", "parede", "prateleira"), referencia=("nenhuma", "moeda", "caneca", "celular"),
                     camera=("3/4", "frontal", "close", "orbital"), luz=("dia", "tarde", "noite"), modelo=("produto", "enviado"))
 CENA_VIEW = {"3/4": "cena", "frontal": "cena_frontal", "close": "cena_close", "orbital": "cena"}  # a câmera orbital só se move no vídeo; na imagem vale o 3/4
 
@@ -155,11 +157,22 @@ def clean_cena(d):
         raise ValueError("a escala deve ficar entre 10% e 500%")
     if not 0 <= giro < 360:
         raise ValueError("o giro deve ficar entre 0 e 359 graus")
-    return c | dict(escala_pct=esc, giro=giro)
+    try:
+        lim = int(c["limite_s"])
+    except (TypeError, ValueError):
+        raise ValueError("limite de tempo inválido")
+    if not 30 <= lim <= 7200:
+        raise ValueError("o limite de tempo do render deve ficar entre 30 segundos e 2 horas")
+    return c | dict(escala_pct=esc, giro=giro, limite_s=lim)
 
 
 def cena_cfg(c):
     """O que o Blender recebe da sala virtual: o ambiente escolhido e os controles; sem o objeto automático (modem, chaves) do produto."""
+    if c["ambiente"] in salas.SALAS:  # sala 3D importada (GLB/FBX): o Blender importa o arquivo e acha onde pôr a peça
+        f = salas.modelo(c["ambiente"])
+        if not f:
+            raise ValueError(f"baixe a sala {salas.SALAS[c['ambiente']]['label']} antes de usar")
+        return dict(cena=c, sala=dict(importada=str(f), id=c["ambiente"]), objeto="", montagem="", polyhaven=str(polyhaven.ROOT))
     return dict(cena=c, sala=polyhaven.ROOMS[c["ambiente"]], objeto="", montagem="")
 
 
@@ -189,7 +202,7 @@ BLEND_VIEWS = ("cena", "cena_frontal", "cena_close")
 def _blender(args, timeout=900):
     """Roda o Blender sem janela (headless) e levanta ValueError com o fim do log se falhar."""
     try:
-        r = proc.run([str(BLENDER), *args], capture_output=True, text=True, timeout=timeout)
+        r = proc.run([str(BLENDER), *args], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout)
     except proc.TimeoutExpired:
         raise ValueError("o Blender passou do tempo limite")
     return r
@@ -200,9 +213,9 @@ def gerar_blend(model, blend, cena, title=""):
     Texturas e HDRI vão empacotados dentro do arquivo, então ele abre em qualquer pasta. Devolve o caminho."""
     if not BLENDER.exists():
         raise ValueError("Blender não encontrado em tools/blender")
-    if not polyhaven.available():
-        raise ValueError("os ativos da sala (Poly Haven) ainda não foram baixados")
     c = clean_cena(cena)
+    if c["ambiente"] not in salas.SALAS and not polyhaven.available():
+        raise ValueError("os ativos da sala (Poly Haven) ainda não foram baixados")
     blend = Path(blend)
     blend.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory() as tmp:
@@ -254,10 +267,11 @@ def _render_blend(blend, outdir, cfg, engine, timeout):
     return r
 
 
-def render_blend(blend, outdir, camera="cena", preview=False, engine=None):
+def render_blend(blend, outdir, camera="cena", preview=False, engine=None, limite_s=600):
     """Imagem da sala.blend com a câmera e a luz que estão no arquivo (a câmera: cena, cena_frontal ou cena_close). Devolve o JPG."""
     q = QUALITY["rapido" if preview else "normal"]
-    cfg = dict(cameras=[f"cam-{camera}"], res=[640, 640] if preview else [1200, 1200], samples_eevee=q[0], samples_cycles=q[1])
+    cfg = dict(cameras=[f"cam-{camera}"], res=[640, 640] if preview else [1200, 1200], samples_eevee=q[0], samples_cycles=q[1] if preview else CENA_FINAL_AMOSTRAS,
+               time_limit=0 if preview else limite_s)
     r = _render_blend(blend, outdir, cfg, engine or ("EEVEE" if preview else "CYCLES"), 900)
     f = outdir / "render_1.jpg"
     if not f.is_file():
@@ -291,6 +305,8 @@ def render_images(model, outdir, cfg=None, title="", cena=None, preview=False):
     with tempfile.TemporaryDirectory() as tmp:
         scene_cfg = cfg | dict(polyhaven=str(polyhaven.ROOT) if polyhaven.available() else "", views=[(v, *VIEWS[v]) for v in cfg["views"]], contexto=scene_for(cfg, title), **room_cfg(cfg, title), samples_eevee=QUALITY[cfg["quality"]][0], samples_cycles=QUALITY[cfg["quality"]][1], dist=FILL[cfg["fill"]])
         scene_cfg |= (cena_cfg(cena) | dict(still_cycles=not preview)) if cena else {}
+        if cena and not preview:  # imagem final da sala virtual: Cycles com denoiser, no mínimo 128 amostras, parando no limite de tempo
+            scene_cfg |= dict(samples_cycles=CENA_FINAL_AMOSTRAS, time_limit=clean_cena(cena)["limite_s"])
         cfgfile = Path(tmp) / "cfg.json"
         cfgfile.write_text(json.dumps(scene_cfg), encoding="utf-8")
         stl = Path(model)
@@ -301,7 +317,7 @@ def render_images(model, outdir, cfg=None, title="", cena=None, preview=False):
         for engine in ("EEVEE", "CYCLES"):
             try:
                 r = proc.run([str(BLENDER), "-b", "-P", str(SCENE), "--", str(stl), str(outdir), str(cfgfile), engine],
-                                   capture_output=True, text=True, timeout=900)
+                                   capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=900)
             except proc.TimeoutExpired:
                 raise ValueError("a geração das imagens passou de 15 minutos")
             files = sorted(outdir.glob("render_*.jpg"))
@@ -352,7 +368,7 @@ def render_frames(model, outdir, n, engine="EEVEE", res=(1080, 1920), title="", 
         for eng in ((engine,) if engine == "CYCLES" else ("EEVEE", "CYCLES")):
             t0 = time.time()
             try:
-                r = proc.run([str(BLENDER), "-b", "-P", str(SCENE), "--", str(stl), str(outdir), str(cfgfile), eng], capture_output=True, text=True, timeout=timeout)
+                r = proc.run([str(BLENDER), "-b", "-P", str(SCENE), "--", str(stl), str(outdir), str(cfgfile), eng], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout)
             except proc.TimeoutExpired:
                 raise ValueError("a geração dos quadros do vídeo passou do tempo limite")
             files = [outdir / f"render_{i}.jpg" for i in range(1, n + 1)]

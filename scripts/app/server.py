@@ -31,6 +31,7 @@ import identity  # noqa: E402
 import polyhaven  # noqa: E402
 import perfis  # noqa: E402
 import sala  # noqa: E402
+import salas  # noqa: E402
 import selecao  # noqa: E402
 import texto  # noqa: E402  (scripts/app/slice.py; mesmo diretório do server.py)
 from classify import score  # noqa: E402
@@ -1078,7 +1079,7 @@ def run_cena(lid, cena, kind, seconds=6, fps=24, engine="EEVEE"):
                 except Exception:
                     pass
             if kind == "imagem":
-                f = (renderizar.render_blend(blend, cena_dir(lid) / "final", renderizar.CENA_VIEW[c["camera"]]) if usa_blend
+                f = (renderizar.render_blend(blend, cena_dir(lid) / "final", renderizar.CENA_VIEW[c["camera"]], limite_s=c["limite_s"]) if usa_blend
                      else renderizar.render_cena(model, cena_dir(lid) / "final", c, title=cena_titulo(lid)))
                 d = PRODUCTS / str(lid) / "renders"
                 d.mkdir(parents=True, exist_ok=True)
@@ -1098,6 +1099,21 @@ def run_cena(lid, cena, kind, seconds=6, fps=24, engine="EEVEE"):
                 videos.make_camera_video(frames, script, cena_dir(lid) / "video.mp4", cfg=dict(video_cfg(), fps=fps, clip_seconds=seconds))
                 job.update(status="ok", msg="Vídeo da sala virtual pronto.")
     except Exception as e:
+        job.update(status="error", msg=str(e)[:300])
+
+
+SALA_DL = {}  # id da sala importada -> andamento do download, só em memória
+
+
+def run_sala_download(sid):
+    job = SALA_DL[sid] = dict(status="running", stage="baixando", done=0, total=0, msg="")
+
+    def progress(stage, done, total):
+        job.update(stage=stage, done=done, total=total)
+    try:
+        salas.baixar(sid, progress)
+        job.update(status="done", stage="pronto")
+    except Exception as e:  # o que já foi baixado fica em _downloads e o próximo clique continua de onde parou
         job.update(status="error", msg=str(e)[:300])
 
 
@@ -1399,7 +1415,10 @@ class H(BaseHTTPRequestHandler):
             lid = int(parse_qs(url.query).get("id", ["0"])[0])
             return self._json(dict(cena=get_setting(f"cena:{lid}") or renderizar.clean_cena({}), job=CENA_JOBS.get(lid), previa=(cena_dir(lid) / "previa.jpg").is_file(), video=(cena_dir(lid) / "video.mp4").is_file(),
                                    modelo_enviado=next((f.name for f in sorted(cena_dir(lid).glob("modelo.*"))), None), opcoes={k: list(v) for k, v in renderizar.CENA_CHOICES.items()},
-                                   ambientes={k: v["label"] for k, v in polyhaven.ROOMS.items()}, sala=sala.estado(lid, cena_dir(lid))))
+                                   ambientes={k: v["label"] for k, v in polyhaven.ROOMS.items()} | {m["id"]: m["label"] for m in salas.lista()},
+                                   importadas=salas.lista(SALA_DL), creditos=salas.FRASE, sala=sala.estado(lid, cena_dir(lid))))
+        if path == "/api/salas":
+            return self._json(dict(salas=salas.lista(SALA_DL), aviso=salas.FRASE))
         if path == "/api/cena/catalogo":
             try:
                 return self._json(dict(itens=sala.catalogo(parse_qs(url.query).get("cat", ["furniture"])[0])))
@@ -1610,6 +1629,16 @@ class H(BaseHTTPRequestHandler):
                     return self._json(dict(error="aprove o produto antes" if not st else "já está gerando"), 400)
                 c.execute("UPDATE steps SET status='running' WHERE listing_id=? AND name='copy'", (data["id"],))
             threading.Thread(target=run_copy, args=(data["id"],), daemon=True).start()
+            return self._json(dict(ok=True))
+        if path == "/api/salas/baixar":
+            sid = str(data.get("id", ""))
+            if sid not in salas.SALAS:
+                return self._json(dict(error="sala desconhecida"), 400)
+            if any(j.get("status") == "running" for j in SALA_DL.values()):
+                return self._json(dict(error="já tem um download de sala em andamento"), 400)
+            if salas.modelo(sid):
+                return self._json(dict(error="essa sala já está baixada"), 400)
+            threading.Thread(target=run_sala_download, args=(sid,), daemon=True).start()
             return self._json(dict(ok=True))
         if path in ("/api/cena/sala/gerar", "/api/cena/sala/abrir", "/api/cena/sala/adicionar"):
             try:

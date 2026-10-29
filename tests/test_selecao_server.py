@@ -293,7 +293,7 @@ def test_api_da_sala_editavel_gera_abre_adiciona_e_renderiza_do_blend(tmp_path, 
         assert post("/api/cena/sala/adicionar", dict(id=1, itens=[{"fonte": "arquivo:../fora.glb"}]))["ok"] and espera()["status"] == "error"
         assert post("/api/cena/sala/adicionar", dict(id=1, itens=[]))["http"] == 400
         # abrir: processo com janela; enquanto aberto, não deixa abrir de novo, adicionar nem refazer
-        assert post("/api/cena/sala/abrir", dict(id=1))["ok"] and aberto[0][1] == dict(show=True) and aberto[0][0][-1].endswith("sala.blend")
+        assert post("/api/cena/sala/abrir", dict(id=1))["ok"] and aberto[0][1] == dict(show=True) and aberto[0][0][1].endswith("sala.blend") and "blender_painel.py" in aberto[0][0][3]
         assert json.load(urllib.request.urlopen(b + "/api/cena?id=1", timeout=10))["sala"]["aberto"] is True
         assert post("/api/cena/sala/abrir", dict(id=1))["http"] == 400
         assert post("/api/cena/sala/adicionar", dict(id=1, itens=[{"fonte": "polyhaven:x"}]))["ok"] and espera()["status"] == "error"

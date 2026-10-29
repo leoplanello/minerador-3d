@@ -361,7 +361,7 @@ def test_sala_virtual_na_tela_do_produto(gui):
         page.wait_for_selector("#slprev")
         txt = page.inner_text("#salacard")
         assert "Sala virtual" in txt and "Pré-visualizar" in txt and "Gerar vídeo orbital" in txt
-        assert page.locator("#sl_ambiente option").count() == 6 and page.locator("#sl_colocacao option").count() == 4
+        assert page.locator("#sl_ambiente option").count() == 8 and page.locator("#sl_colocacao option").count() == 4
         page.select_option("#sl_luz", "noite")
         page.fill("#sl_escala", "250")
         assert "250%" in page.inner_text("#sl_escv")
@@ -450,4 +450,32 @@ def test_sala_editavel_no_cartao_da_sala_virtual(gui, monkeypatch, tmp_path):
         page.goto(f"{gui}/#/producao/2")
         page.wait_for_selector("#slopen")
         assert page.is_disabled("#slopen") and page.is_disabled("#sladd") and "salve (Ctrl+S) e feche" in page.inner_text("#slblend")
+        b.close()
+
+
+def test_sala_importada_pede_download_e_libera_depois_de_baixar(gui, monkeypatch, tmp_path):
+    baixadas = set()
+    monkeypatch.setattr(server.salas, "modelo", lambda sid: tmp_path / "sala.glb" if sid in baixadas else None)
+
+    def baixar_falso(sid, progress=None, abrir=None):
+        progress("baixando", 50, 100)
+        baixadas.add(sid)
+    monkeypatch.setattr(server.salas, "baixar", baixar_falso)
+    with playwright.sync_playwright() as p:
+        b = p.chromium.launch(channel="chrome")
+        page = b.new_page(viewport={"width": 1280, "height": 800})
+        page.goto(f"{gui}/#/producao/2")
+        page.wait_for_selector("#slprev")
+        assert page.locator("#sl_ambiente option").count() == 8 and "Apartamento 3 quartos" in page.inner_text("#sl_ambiente")
+        assert "nickadamsss" in page.inner_text("#salacard") and "CGTrader" in page.inner_text("#salacard") and "retirada" in page.inner_text("#salacard")  # créditos sempre na tela
+        page.select_option("#sl_ambiente", "apartamento-3-quartos")
+        page.wait_for_selector("#sldl")
+        assert "1161 MB" in page.inner_text("#slimpbox") and page.is_disabled("#slprev") and page.is_disabled("#slfinal") and page.is_disabled("#slvid")
+        page.select_option("#sl_ambiente", "quarto")  # sala padrão: tudo liberado
+        assert page.is_enabled("#slprev") and page.inner_text("#slimpbox") == ""
+        page.select_option("#sl_ambiente", "apartamento-3-quartos")
+        page.click("#sldl")
+        page.wait_for_selector("#slimpbox .chip.ok", timeout=8000)
+        assert "Sala baixada" in page.inner_text("#slimpbox") and page.is_enabled("#slprev") and "12 GB" in page.inner_text("#slimpbox")
+        assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
         b.close()

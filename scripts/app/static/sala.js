@@ -32,13 +32,15 @@ const SALA = {
         <div class="row small"><span>Modelo:</span><label class="chk"><input type="radio" name="slmod" value="produto" ${v.modelo !== 'enviado' ? 'checked' : ''}> do produto</label>
           <label class="chk"><input type="radio" name="slmod" value="enviado" ${v.modelo === 'enviado' ? 'checked' : ''}> um arquivo só para a cena ${d.modelo_enviado ? `(${esc(d.modelo_enviado)})` : ''}</label>
           <input id="slfile" type="file" accept=".stl,.3mf"></div>
+        <div id="slimpbox" class="small"></div>
         <div id="slblend" class="small" style="border-top:1px solid var(--line);padding-top:10px"></div>
         <div class="row"><button id="slprev" class="pri sm">Pré-visualizar (rápido)</button><button id="slfinal" class="sm">Gerar imagem final</button>
           <label class="small">Vídeo (s)<input id="slseg" type="number" min="3" max="20" value="6" style="width:64px"></label>
           <label class="chk small"><input type="checkbox" id="slcyc"> Cycles</label><button id="slvid" class="sm">Gerar vídeo orbital</button></div>
         <p id="slest" class="small mut" style="margin:0"></p><p id="slmsg" class="small" style="margin:0"></p>
         <div class="row" style="align-items:flex-start"><img id="slimg" alt="Pré-visualização" style="max-width:360px;width:100%;border-radius:8px;${d.previa ? '' : 'display:none'}" src="${d.previa ? `/products/${c.id}/cena/previa.jpg?t=${Date.now()}` : ''}">
-          <video id="slvideo" controls style="max-width:200px;${d.video ? '' : 'display:none'}" ${d.video ? `src="/products/${c.id}/cena/video.mp4?t=${Date.now()}"` : ''}></video></div></div>`;
+          <video id="slvideo" controls style="max-width:200px;${d.video ? '' : 'display:none'}" ${d.video ? `src="/products/${c.id}/cena/video.mp4?t=${Date.now()}"` : ''}></video></div>
+        <p class="small mut" style="margin:6px 0 0">Salas importadas (CGTrader, modelos gratuitos): ${(d.importadas || []).map(m => `“${esc(m.titulo)}” por ${esc(m.autor)} (<a href="${esc(m.pagina)}" target="_blank" rel="noopener">CGTrader</a>)`).join('; ')}. ${esc(d.creditos || '')} Móveis das salas padrão: Poly Haven, CC0.</p></div>`;
     const upd = () => { $('sl_escv').textContent = $('sl_escala').value + '%'; $('sl_girov').textContent = $('sl_giro').value + '°';
       const s = +$('slseg').value || 6, cy = $('slcyc').checked;
       $('slest').textContent = cy ? `Vídeo em Cycles: ${s * 24} quadros, cerca de ${Math.round(s * 24 * 55 / 60)} min nesta máquina (pesado). A pré-visualização e a imagem final são mais rápidas.`
@@ -54,7 +56,28 @@ const SALA = {
     $('slprev').onclick = async () => { const r = await run($('slprev'), '/api/cena/previa', {}, 'Pré-visualização pronta.'); if (r) { const im = $('slimg'); im.style.display = ''; im.src = r.url; } };
     $('slfinal').onclick = async () => { const r = await run($('slfinal'), '/api/cena/render', {}, 'Renderizando a imagem final em Cycles (alguns minutos)…'); if (r) this.poll(c); };
     $('slvid').onclick = async () => { const r = await run($('slvid'), '/api/cena/video', {segundos: +$('slseg').value || 6, motor: $('slcyc').checked ? 'cycles' : 'eevee'}, 'Renderizando os quadros do vídeo…'); if (r) this.poll(c); };
+    $('sl_ambiente').addEventListener('change', () => this.imp(c));
+    this.imp(c);
     this.blend(c);
+  },
+  // sala importada (GLB/FBX de terceiros): baixa na primeira vez que for escolhida, com tamanho, progresso e retomada
+  imp(c) {
+    const box = $('slimpbox'); if (!box) return;
+    const id = $('sl_ambiente').value, m = (this.data.importadas || []).find(x => x.id === id);
+    const falta = !!m && !m.instalada, j = m && m.job, rodando = !!j && j.status === 'running';
+    ['slprev', 'slfinal', 'slvid', 'slmake'].forEach(b => { const e = $(b); if (e) e.disabled = falta; });
+    clearTimeout(this.ti);
+    if (!m) { box.innerHTML = ''; return; }
+    if (m.instalada) { box.innerHTML = `<span class="chip ok">Sala baixada</span> “${esc(m.titulo)}” de ${esc(m.autor)}. Sala grande: a pré-visualização usa até ${m.ram_gb} GB de memória e demora ${m.ram_gb > 6 ? 'cerca de 2 a 4 minutos' : 'cerca de 1 minuto'} (carregar a sala é o que leva tempo).`; return; }
+    const pct = j && j.total ? Math.round(100 * j.done / j.total) : 0, mb = x => Math.round(x / 1048576);
+    box.innerHTML = rodando ? `<b>${j.stage === 'baixando' ? 'Baixando' : j.stage === 'conferindo' ? 'Conferindo o arquivo' : 'Instalando'} ${esc(m.label)}</b>: ${pct}% (${mb(j.done)} de ${mb(j.total)} MB). Pode fechar esta tela; se a internet cair, é só baixar de novo que continua de onde parou.`
+      : `Essa sala (${esc(m.label)}) tem <b>${m.size_mb} MB</b> e é baixada uma vez, da página de downloads do projeto no GitHub. ${j && j.status === 'error' ? `<span style="color:var(--red)">${esc(j.msg)}</span> ` : ''}<button id="sldl" class="sm pri">${j && j.status === 'error' ? 'Tentar de novo' : `Baixar (${m.size_mb} MB)`}</button>`;
+    if ($('sldl')) $('sldl').onclick = async () => { const r = await post('/api/salas/baixar', {id}); if (r.error) return toast(r.error); await this.refresh(c); };
+    if (rodando) this.ti = setTimeout(() => this.refresh(c), 2000);
+  },
+  async refresh(c) {
+    this.data = await (await fetch('/api/cena?id=' + c.id)).json();
+    if ($('slimpbox')) this.imp(c);
   },
   // sala editável: o app gera a sala.blend, abre o Blender, e as imagens e o vídeo saem do arquivo salvo
   async blend(c) {
@@ -90,6 +113,7 @@ const SALA = {
         const up = await (await fetch(`/api/cena/sala/importar?id=${c.id}&name=${encodeURIComponent(f.name)}`, {method: 'POST', body: f})).json(); if (up.error) return toast(up.error);
         const r = await post('/api/cena/sala/adicionar', {id: c.id, itens: [{fonte: up.fonte}]}); if (r.error) return toast(r.error); this.poll(c); };
     }
+    this.imp(c);
     if (s.aberto) { clearTimeout(this.tb); this.tb = setTimeout(() => this.blend(c), 4000); }  // quando o Blender fecha, o estado volta sozinho
   },
   poll(c) {

@@ -85,7 +85,7 @@ def test_abrir_exige_sala_abre_com_janela_e_nao_abre_duas_vezes(tmp_path, monkey
             return 0
     monkeypatch.setattr(render, "blend_layout", lambda *a: None)
     sala.abrir(7, tmp_path, popen=lambda cmd, **kw: chamadas.append((cmd, kw)) or P())
-    assert chamadas[0][0][-1].endswith("sala.blend") and chamadas[0][1] == dict(show=True)
+    assert chamadas[0][0][1].endswith("sala.blend") and chamadas[0][0][2] == "--python" and chamadas[0][0][3].endswith("blender_painel.py") and chamadas[0][1] == dict(show=True)
     assert sala.estado(7, tmp_path)["aberto"] is True
     with pytest.raises(ValueError, match="já está aberta"):
         sala.abrir(7, tmp_path, popen=lambda *a, **k: P())
@@ -111,7 +111,7 @@ def test_sala_editavel_real_gera_edita_adiciona_e_renderiza(tmp_path):
     blend = sala.gerar(tmp_path, stl, cena, "Suporte")
     assert blend.is_file() and not list(tmp_path.glob("*.novo.blend"))
     lay = {o["id"]: o for o in json.loads((tmp_path / "layout.json").read_text(encoding="utf-8"))["objetos"]}
-    assert {"peca", "cam-cena", "cam-cena_frontal", "cam-cena_close", "luz-janela", "parede-sala", "piso-sala"} <= set(lay)
+    assert {"peca", "cam-cena", "cam-cena_frontal", "cam-cena_close", "Luz da janela", "parede-sala", "piso-sala"} <= set(lay)
     assert lay["peca"]["tipo"] == "peca" and lay["wooden_table_02"]["tipo"] == "movel" and lay["wooden_table_02"]["fonte"] == "polyhaven:wooden_table_02"  # cada móvel é um objeto só
     assert lay["dining_chair_02"]["pos"][0] == pytest.approx(650, abs=1) and lay["dining_chair_02"]["pos"][2] == pytest.approx(0, abs=1)  # em mm, base no piso
 

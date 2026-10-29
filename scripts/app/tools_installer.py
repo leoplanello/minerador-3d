@@ -34,10 +34,10 @@ def _host_ok(url):
     return u.scheme == "https" and any(h == d or h.endswith("." + d) for d in HOSTS)
 
 
-def _open(url):
+def _open(url, extra=None):
     if not _host_ok(url):
         raise ValueError("endereço de download não permitido")
-    r = urllib.request.urlopen(urllib.request.Request(url, headers=UA), timeout=60)
+    r = urllib.request.urlopen(urllib.request.Request(url, headers=UA | (extra or {})), timeout=60)
     if not _host_ok(r.geturl()):  # depois dos redirecionamentos também
         raise ValueError("o download foi redirecionado para um endereço não permitido")
     return r
@@ -62,12 +62,12 @@ def expected_sha(src):
     raise ValueError("não achei o SHA-256 do download")
 
 
-def _open_retry(url, tries=3):
+def _open_retry(url, tries=3, extra=None):
     """Servidores de download às vezes respondem 5xx por instantes: tenta de novo com espera crescente."""
     import time
     for i in range(tries):
         try:
-            return _open(url)
+            return _open(url, extra)
         except urllib.error.HTTPError as e:
             if e.code < 500 or i == tries - 1:
                 raise
