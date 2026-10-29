@@ -4,6 +4,32 @@ const PERFIS = {
   async load() { this.data = await (await fetch('/api/perfis')).json(); this.draw(); },
   async bind() { const box = $('perfcard'); if (!box) return; await this.load();
     clearInterval(this.t); this.t = setInterval(() => { if (!$('perfcard')) return clearInterval(this.t); if ((this.data.app || []).some(p => p.login && p.login.estado === 'aberto')) this.load(); }, 4000); },
+  // dropdown do topo: perfis do app e, por último, "+ Adicionar perfil"; sem perfil nenhum, só o botão grande
+  menu(force) {
+    const sel = $('profile'), names = S.profiles;
+    if (force || sel.options.length !== names.length) {
+      const saved = store('profile'), cur = names.includes(saved) ? saved : names[0];
+      sel.innerHTML = names.map(p => `<option ${p === cur ? 'selected' : ''}>${esc(p)}</option>`).join('');
+      $('profpop').innerHTML = names.map(p => `<button data-p="${esc(p)}" aria-current="${p === sel.value}">${esc(p)}</button>`).join('') + '<button class="add" data-add="1">+ Adicionar perfil</button>';
+      $('profbtn').textContent = sel.value;
+    }
+    $('profbig').hidden = names.length > 0; $('profbtn').hidden = !names.length;
+    if (!names.length) $('profpop').hidden = true;
+  },
+  async dialog() {
+    if (!this.data) this.data = await (await fetch('/api/perfis')).json();
+    const old = $('pfdlg'); if (old) old.remove();
+    const d = document.createElement('dialog'); d.id = 'pfdlg';
+    d.innerHTML = `<h2 style="margin-top:0">Adicionar perfil do Chrome</h2>
+      <p class="small mut">Abre uma janela nova do Chrome só desse perfil, na página de login. Entre e feche a janela: o perfil fica salvo na lista. Nenhuma senha nem cookie de outro perfil é copiado.</p>
+      <div class="form"><label class="small">Apelido<input id="pdnick" maxlength="40" placeholder="ex.: Loja principal" autofocus></label>
+        <label class="small">Entrar em<select id="pdserv">${Object.entries(this.data.servicos).map(([k, v]) => `<option value="${k}">${esc(v)}</option>`).join('')}</select></label>
+        <div class="row"><button id="pdok" class="pri">Abrir o Chrome para entrar</button><button id="pdcancel" class="ghost">Cancelar</button></div></div>`;
+    document.body.appendChild(d); d.showModal();
+    $('pdcancel').onclick = () => d.close();
+    $('pdok').onclick = async () => { const r = await post('/api/perfis/adicionar', {apelido: $('pdnick').value, servico: $('pdserv').value}); if (r.error) return toast(r.error);
+      d.close(); toast('Chrome aberto. Entre na conta e feche a janela.'); await this.load(); load(); };
+  },
   draw() {
     const box = $('perfcard'); if (!box || !this.data) return;
     const d = this.data, cur = $('profile') && $('profile').value;
@@ -29,3 +55,13 @@ const PERFIS = {
       toast('Chrome aberto. Entre na conta e feche a janela.'); await this.load(); load(); };
   },
 };
+
+// dropdown do topo: abrir e fechar, escolher um perfil ou adicionar (a opção extra nunca vira o perfil escolhido)
+document.addEventListener('click', e => {
+  const pop = $('profpop'); if (!pop) return;
+  if (e.target.closest('#profbig')) return PERFIS.dialog();
+  if (e.target.closest('#profbtn')) { pop.hidden = !pop.hidden; $('profbtn').setAttribute('aria-expanded', String(!pop.hidden)); return; }
+  const b = e.target.closest('#profpop button');
+  if (b) { pop.hidden = true; if (b.dataset.add) return PERFIS.dialog(); const s = $('profile'); s.value = b.dataset.p; s.dispatchEvent(new Event('change')); return; }
+  pop.hidden = true;
+});

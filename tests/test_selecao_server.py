@@ -216,3 +216,89 @@ def test_api_da_sala_virtual(tmp_path, monkeypatch):
         assert "cena_1.jpg" in [m["name"] for m in server.media_files(1)]  # a imagem entra na galeria do produto
     finally:
         srv.shutdown()
+
+
+def test_api_da_sala_editavel_gera_abre_adiciona_e_renderiza_do_blend(tmp_path, monkeypatch):
+    banco(tmp_path, monkeypatch)
+    stl(tmp_path / "products/1/model/m.stl", 40, 30, 20)
+    with server.db() as c:
+        c.execute("INSERT INTO models(listing_id,file_path) VALUES(1,'products/1/model/m.stl')")
+    feitos = []
+
+    def gerar_falso(model, blend, cena, title=""):
+        feitos.append(("gerar", Path(model).name, cena["ambiente"]))
+        Path(blend).write_bytes(b"BLENDER-gerado")
+        return blend
+
+    def render_falso(blend, outdir, camera="cena", preview=False, engine=None):
+        feitos.append(("render", camera, preview))
+        outdir.mkdir(parents=True, exist_ok=True)
+        (outdir / "render_1.jpg").write_bytes(b"\xff\xd8blend")
+        return outdir / "render_1.jpg"
+
+    def frames_falso(blend, outdir, n, engine="EEVEE", res=(1080, 1920), **kw):
+        feitos.append(("frames", n))
+        outdir.mkdir(parents=True, exist_ok=True)
+        out = [outdir / f"render_{i}.jpg" for i in range(1, n + 1)]
+        for f in out:
+            f.write_bytes(b"\xff\xd8")
+        return out
+    r = server.renderizar
+    monkeypatch.setattr(r, "gerar_blend", gerar_falso)
+    monkeypatch.setattr(r, "render_blend", render_falso)
+    monkeypatch.setattr(r, "render_blend_frames", frames_falso)
+    monkeypatch.setattr(r, "blend_layout", lambda blend, saida: Path(saida).write_text(json.dumps(dict(objetos=[dict(id="peca", tipo="peca"), dict(id="cam-cena", tipo="camera")])), encoding="utf-8"))
+    adicionados = []
+    monkeypatch.setattr(r, "blend_adicionar", lambda blend, itens: adicionados.extend(itens))
+    monkeypatch.setattr(server.polyhaven, "ensure", lambda: {})
+    monkeypatch.setattr(server.sala, "baixar_modelo", lambda asset, *a, **k: tmp_path / f"{asset}.gltf")
+    aberto = []
+    monkeypatch.setattr(server.sala.proc, "popen", lambda cmd, **kw: aberto.append((cmd, kw)) or type("P", (), {"poll": lambda s: None, "wait": lambda s: None})())
+    monkeypatch.setattr(r, "BLENDER", Path(sys.executable))
+    srv = server.make_server(0)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    b = f"http://127.0.0.1:{srv.server_port}"
+
+    def post(p, d, raw=None):
+        try:
+            return json.load(urllib.request.urlopen(urllib.request.Request(b + p, raw if raw is not None else json.dumps(d).encode()), timeout=20))
+        except urllib.error.HTTPError as e:
+            return json.load(e) | {"http": e.code}
+
+    def espera():
+        for _ in range(200):
+            if server.CENA_JOBS[1]["status"] != "running":
+                break
+            time.sleep(0.05)
+        return server.CENA_JOBS[1]
+    try:
+        assert json.load(urllib.request.urlopen(b + "/api/cena?id=1", timeout=10))["sala"]["existe"] is False
+        assert post("/api/cena/sala/abrir", dict(id=1))["http"] == 400  # sem sala ainda
+        assert post("/api/cena/sala/gerar", dict(id=1, cena=dict(ambiente="quarto")))["ok"]
+        j = espera(); assert j["status"] == "ok" and feitos[0] == ("gerar", "m.stl", "quarto"), j
+        s = json.load(urllib.request.urlopen(b + "/api/cena?id=1", timeout=10))["sala"]
+        assert s["existe"] and [o["id"] for o in s["objetos"]] == ["peca"] and s["aberto"] is False
+        assert post("/api/cena/sala/gerar", dict(id=1, cena={}))["ok"] and espera()["status"] == "error"  # já existe: só com Refazer
+        # com sala.blend, a prévia, a imagem final e o vídeo saem do arquivo
+        assert post("/api/cena/previa", dict(id=1, cena=dict(camera="close")))["ok"] and feitos[-1] == ("render", "cena_close", True)
+        assert post("/api/cena/render", dict(id=1, cena={}))["ok"] and espera()["status"] == "ok" and feitos[-1] == ("render", "cena", False)
+        assert post("/api/cena/video", dict(id=1, cena={}, segundos=3))["ok"]
+        assert espera()["status"] in ("ok", "error") and feitos[-1] == ("frames", 72)
+        # importar modelo próprio e catálogo
+        assert post("/api/cena/sala/importar?id=1&name=virus.exe", None, raw=b"x")["http"] == 400
+        up = post("/api/cena/sala/importar?id=1&name=../meu%20vaso.glb", None, raw=b"glTF" * 4)
+        assert up["fonte"] == "arquivo:modelos/meu vaso.glb"
+        assert post("/api/cena/sala/adicionar", dict(id=1, itens=[{"fonte": up["fonte"]}, {"fonte": "polyhaven:cadeira_01"}]))["ok"] and espera()["status"] == "ok"
+        assert [i["fonte"] for i in adicionados] == ["arquivo:modelos/meu vaso.glb", "polyhaven:cadeira_01"]
+        assert post("/api/cena/sala/adicionar", dict(id=1, itens=[{"fonte": "arquivo:../fora.glb"}]))["ok"] and espera()["status"] == "error"
+        assert post("/api/cena/sala/adicionar", dict(id=1, itens=[]))["http"] == 400
+        # abrir: processo com janela; enquanto aberto, não deixa abrir de novo, adicionar nem refazer
+        assert post("/api/cena/sala/abrir", dict(id=1))["ok"] and aberto[0][1] == dict(show=True) and aberto[0][0][-1].endswith("sala.blend")
+        assert json.load(urllib.request.urlopen(b + "/api/cena?id=1", timeout=10))["sala"]["aberto"] is True
+        assert post("/api/cena/sala/abrir", dict(id=1))["http"] == 400
+        assert post("/api/cena/sala/adicionar", dict(id=1, itens=[{"fonte": "polyhaven:x"}]))["ok"] and espera()["status"] == "error"
+        assert post("/api/cena/sala/gerar", dict(id=1, cena={}, refazer=True))["ok"] and espera()["status"] == "error"
+        assert (tmp_path / "products/1/cena/sala.blend").read_bytes() == b"BLENDER-gerado"  # nada foi apagado
+    finally:
+        server.sala.ABERTOS.clear()
+        srv.shutdown()
