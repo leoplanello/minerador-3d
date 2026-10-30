@@ -68,3 +68,24 @@ def test_gerar_recusa_sem_blender(tmp_path, monkeypatch):
     monkeypatch.setattr(estudio, "_blender", lambda: tmp_path / "nao-existe" / "blender.exe")
     with pytest.raises(ValueError, match="Blender"):
         estudio.gerar(_3mf(tmp_path), tmp_path / "saida")
+
+
+def test_medida_sai_em_centimetros_com_virgula():
+    assert estudio._cm(135) == "13,5 cm"
+    assert estudio._cm(139.2) == "13,9 cm"
+
+
+def test_cotas_nao_cobrem_o_produto(tmp_path):
+    """Textos das cotas ficam fora da silhueta do produto (que é um retângulo de teste no centro da imagem)."""
+    origem, destino = tmp_path / "base.png", tmp_path / "cotas.png"
+    Image.new("RGB", (960, 960), (255, 255, 255)).save(origem)
+    medidas = dict(cantos={"000": [300, 800], "100": [700, 820], "010": [320, 300], "001": [300, 300], "110": [760, 700], "101": [740, 300],
+                           "011": [300, 250], "111": [740, 250]},
+                   silhueta={"esq": [300, 500], "dir": [700, 600], "topo": [500, 200], "base": [500, 800]},
+                   dimensoes_mm=[135, 131, 139], tamanho=960)
+    estudio.cotas_2d(origem, medidas, destino)
+    out = Image.open(destino)
+    assert out.size == (960, 960)
+    miolo = out.crop((350, 260, 650, 760)).convert("L")
+    pretos = sum(1 for px in miolo.getdata() if px < 60)
+    assert pretos == 0  # nenhuma linha ou texto dentro da área do produto

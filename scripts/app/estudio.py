@@ -99,8 +99,9 @@ def cor_linear(hexa):
 
 
 def _fonte(tamanho):
+    """Fonte em negrito (o texto das cotas precisa se destacar sobre a foto)."""
     from PIL import ImageFont
-    for nome in ("arial.ttf", "Arial.ttf", "DejaVuSans.ttf", "LiberationSans-Regular.ttf"):
+    for nome in ("arialbd.ttf", "Arial Bold.ttf", "DejaVuSans-Bold.ttf", "LiberationSans-Bold.ttf"):
         try:
             return ImageFont.truetype(nome, tamanho)
         except OSError:
@@ -108,41 +109,84 @@ def _fonte(tamanho):
     return ImageFont.load_default(size=tamanho)
 
 
-def cotas_2d(arquivo, medidas):
-    """Desenha sobre a imagem as três medidas em mm (largura, profundidade e altura) como linhas de cota e texto 2D.
-    Os cantos vêm do Blender já em pixels; não há régua nem objeto 3D."""
+def _cm(mm):
+    """Medida em centímetros com vírgula: 135 mm -> '13,5 cm'."""
+    return f"{mm / 10:.1f} cm".replace(".", ",")
+
+
+def cotas_2d(origem, medidas, destino):
+    """Cotas de largura, profundidade e altura em centímetros, desenhadas sobre a foto de medidas (2D, sem objeto 3D).
+    As linhas começam e terminam nos extremos reais do produto (silhueta vinda do Blender); os textos ficam fora do produto,
+    em negrito, por cima de tudo, e nenhuma linha passa por cima deles."""
     from PIL import Image, ImageDraw
-    c = {k: tuple(v) for k, v in medidas["cantos"].items()}
+    cantos = {k: tuple(v) for k, v in medidas["cantos"].items()}
+    sil = {k: tuple(v) for k, v in medidas["silhueta"].items()}
     dx, dy, dz = medidas["dimensoes_mm"]
-    im = Image.open(arquivo).convert("RGB")
+    im = Image.open(origem).convert("RGB")
     d = ImageDraw.Draw(im)
-    tam = im.width / 34
+    W = im.width
+    tam = W / 36
     fonte = _fonte(int(tam))
-    cor = (34, 34, 34)
-    cotas = [
-        (c["000"], c["100"], (0, tam * 2.2), f"Largura {dx:.0f} mm"),       # frente, embaixo
-        (c["100"], c["110"], (tam * 2.2, 0), f"Profundidade {dy:.0f} mm"),  # lado direito, embaixo
-        (c["000"], c["001"], (-tam * 2.2, 0), f"Altura {dz:.0f} mm"),       # aresta vertical da frente esquerda
-    ]
-    for p0, p1, (ox, oy), texto in cotas:
-        q0, q1 = (p0[0] + ox, p0[1] + oy), (p1[0] + ox, p1[1] + oy)
-        d.line([p0, q0], fill=cor, width=2)  # linhas de extensão
-        d.line([p1, q1], fill=cor, width=2)
-        d.line([q0, q1], fill=cor, width=3)  # linha de cota
-        for ponta, outra in ((q0, q1), (q1, q0)):  # setas nas duas pontas
-            vx, vy = outra[0] - ponta[0], outra[1] - ponta[1]
-            n = max((vx * vx + vy * vy) ** 0.5, 1)
-            ux, uy = vx / n, vy / n
-            for ang in (0.5, -0.5):
+    cor = (20, 20, 20)
+    grossura = max(2, int(W / 480))
+    marg = tam * 1.6
+    textos = []  # (linhas, x da âncora, y da âncora, alinhamento) desenhados por último
+
+    def seta(p, q):
+        d.line([p, q], fill=cor, width=grossura)
+        vx, vy = q[0] - p[0], q[1] - p[1]
+        n = max((vx * vx + vy * vy) ** 0.5, 1)
+        ux, uy = vx / n, vy / n
+        for ponta, (ex, ey) in ((p, (ux, uy)), (q, (-ux, -uy))):
+            for ang in (0.45, -0.45):
                 ca, sa = math.cos(ang), math.sin(ang)
-                ax, ay = ux * ca - uy * sa, ux * sa + uy * ca
-                d.line([ponta, (ponta[0] + ax * tam * 0.6, ponta[1] + ay * tam * 0.6)], fill=cor, width=3)
-        mx, my = (q0[0] + q1[0]) / 2, (q0[1] + q1[1]) / 2
-        larg = d.textlength(texto, font=fonte)
-        caixa = [mx - larg / 2 - 10, my - tam * 0.75, mx + larg / 2 + 10, my + tam * 0.75]
-        d.rectangle(caixa, fill=(255, 255, 255))
-        d.text((mx - larg / 2, my - tam * 0.6), texto, fill=cor, font=fonte)
-    im.save(arquivo)
+                ax, ay = ex * ca - ey * sa, ex * sa + ey * ca
+                d.line([ponta, (ponta[0] + ax * tam * 0.55, ponta[1] + ay * tam * 0.55)], fill=cor, width=grossura)
+
+    def ext(p, q):  # linha de extensão: sai do produto até a linha de cota
+        d.line([p, q], fill=cor, width=grossura)
+
+    # altura: da base ao ponto mais alto do produto, à esquerda dele
+    xa = sil["esq"][0] - marg
+    ext(sil["topo"], (xa, sil["topo"][1]))
+    ext(sil["base"], (xa, sil["base"][1]))
+    seta((xa, sil["topo"][1]), (xa, sil["base"][1]))
+    textos.append((["Altura", _cm(dz)], xa - tam * 0.4, (sil["topo"][1] + sil["base"][1]) / 2, "direita"))
+
+    # largura: do ponto mais à esquerda ao mais à direita, abaixo do produto
+    ya = max(sil["base"][1], sil["esq"][1], sil["dir"][1]) + marg
+    ext(sil["esq"], (sil["esq"][0], ya))
+    ext(sil["dir"], (sil["dir"][0], ya))
+    seta((sil["esq"][0], ya), (sil["dir"][0], ya))
+    textos.append((["Largura", _cm(dx)], (sil["esq"][0] + sil["dir"][0]) / 2, ya + tam * 0.4, "centro"))
+
+    # profundidade: a aresta do chão do lado direito, da frente até o fundo, deslocada para fora do produto
+    p0, p1 = cantos["100"], cantos["110"]
+    desl = max(0, sil["dir"][0] - max(p0[0], p1[0])) + marg
+    q0, q1 = (p0[0] + desl, p0[1]), (p1[0] + desl, p1[1])
+    ext(p0, q0)
+    ext(p1, q1)
+    seta(q0, q1)
+    textos.append((["Profundidade", _cm(dy)], max(q0[0], q1[0]) + tam * 0.4, (q0[1] + q1[1]) / 2, "esquerda"))
+
+    # textos por último, com fundo branco: ficam por cima de linhas e nunca tampam o produto
+    pad = tam * 0.25
+    for linhas, x, y, alinha in textos:
+        larg = max(d.textlength(t, font=fonte) for t in linhas)
+        alt = len(linhas) * tam * 1.15
+        if alinha == "direita":
+            x0 = x - larg
+        elif alinha == "esquerda":
+            x0 = x
+        else:
+            x0 = x - larg / 2
+        y0 = y - alt / 2 if alinha != "centro" else y
+        x0 = min(max(x0, 4), W - larg - 4)
+        y0 = min(max(y0, 4), im.height - alt - 4)
+        d.rectangle([x0 - pad, y0 - pad, x0 + larg + pad, y0 + alt + pad], fill=(255, 255, 255))
+        for i, t in enumerate(linhas):
+            d.text((x0, y0 + i * tam * 1.15), t, fill=cor, font=fonte)
+    im.save(destino)
 
 
 def gerar(modelo, pasta, cor=COR_PADRAO, amostras=256, frames=120, fps=30):
@@ -173,7 +217,9 @@ def gerar(modelo, pasta, cor=COR_PADRAO, amostras=256, frames=120, fps=30):
         mp4 = pasta / "giro-360-9x16.mp4"
         for arquivo in sorted(pasta.glob("angulo_*.png")) + [pasta / "medidas.png"] + sorted(frames_dir.glob("frame_*.png")):
             sobre_branco(arquivo)  # antes do vídeo: o fundo transparente vira branco puro
-        cotas_2d(pasta / "medidas.png", json.loads((pasta / "medidas.json").read_text(encoding="utf-8")))
+        base = pasta / "medidas_sem_cotas.png"
+        shutil.copyfile(pasta / "medidas.png", base)
+        cotas_2d(base, json.loads((pasta / "medidas.json").read_text(encoding="utf-8")), pasta / "medidas.png")
         r = proc.run([str(video.FFMPEG), "-y", "-v", "error", "-framerate", str(fps), "-i", str(frames_dir / "frame_%04d.png"),
                       "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "18", "-movflags", "+faststart", str(mp4)],
                      capture_output=True, text=True, timeout=1800)

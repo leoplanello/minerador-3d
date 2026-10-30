@@ -174,7 +174,22 @@ for nome, (x, y, z) in {"000": (lo.x, lo.y, lo.z), "100": (hi.x, lo.y, lo.z), "0
                         "110": (hi.x, hi.y, lo.z), "101": (hi.x, lo.y, hi.z), "011": (lo.x, hi.y, hi.z), "111": (hi.x, hi.y, hi.z)}.items():
     v = world_to_camera_view(cena, camera, Vector((x, y, z)))
     cantos[nome] = [round(v.x * QUAD, 1), round((1 - v.y) * QUAD, 1)]
-(OUT / "medidas.json").write_text(json.dumps(dict(cantos=cantos, dimensoes_mm=dims_mm, tamanho=QUAD)), encoding="utf-8")
+# silhueta do produto na imagem: os pontos mais à esquerda, à direita, no topo e na base (pixels), vindos dos vértices
+extremos = {"esq": None, "dir": None, "topo": None, "base": None}
+mw = modelo.matrix_world
+for vert in modelo.data.vertices:
+    v = world_to_camera_view(cena, camera, mw @ vert.co)
+    p = (v.x * QUAD, (1 - v.y) * QUAD)
+    if extremos["esq"] is None or p[0] < extremos["esq"][0]:
+        extremos["esq"] = p
+    if extremos["dir"] is None or p[0] > extremos["dir"][0]:
+        extremos["dir"] = p
+    if extremos["topo"] is None or p[1] < extremos["topo"][1]:
+        extremos["topo"] = p
+    if extremos["base"] is None or p[1] > extremos["base"][1]:
+        extremos["base"] = p
+silhueta = {k: [round(p[0], 1), round(p[1], 1)] for k, p in extremos.items()}
+(OUT / "medidas.json").write_text(json.dumps(dict(cantos=cantos, silhueta=silhueta, dimensoes_mm=dims_mm, tamanho=QUAD)), encoding="utf-8")
 print("MEDIDAS", flush=True)
 
 # ---- giro de 360° no formato vertical 9:16: a câmera dá a volta completa, com a luz e o chão fixos
