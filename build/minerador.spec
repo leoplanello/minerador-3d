@@ -6,7 +6,7 @@ from PyInstaller.utils.hooks import collect_all
 ROOT = Path(SPECPATH).parent
 APP, MINE = ROOT / "scripts" / "app", ROOT / "scripts" / "mine"
 
-datas = [(str(APP / "static"), "scripts/app/static"), (str(APP / "blender_scene.py"), "scripts/app"), (str(APP / "blender_blend.py"), "scripts/app"),
+datas = [(str(APP / "static"), "scripts/app/static"), (str(APP / "blender_scene.py"), "scripts/app"), (str(APP / "blender_blend.py"), "scripts/app"), (str(APP / "estudio_blender.py"), "scripts/app"),
          (str(ROOT / "db" / "schema.sql"), "db"), (str(ROOT / "VERSION"), ".")]
 binaries = []
 hiddenimports = ["server", "costs", "ml", "render", "slice", "video", "texto", "paths", "updater", "tools_installer",

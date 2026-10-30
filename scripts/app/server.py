@@ -6,6 +6,7 @@ import io
 import re
 import sqlite3
 import zipfile
+import mimetypes
 from datetime import datetime
 import sys
 import time
@@ -31,6 +32,7 @@ import identity  # noqa: E402
 import polyhaven  # noqa: E402
 import perfis  # noqa: E402
 import sala  # noqa: E402
+import modelador  # noqa: E402
 import selecao  # noqa: E402
 import texto  # noqa: E402  (scripts/app/slice.py; mesmo diretório do server.py)
 from classify import score  # noqa: E402
@@ -1431,6 +1433,24 @@ class H(BaseHTTPRequestHandler):
             return
         if path == "/api/browser":
             return self._json(dict(headless=browser_headless()))
+        if path == "/api/referencia/arquivo":
+            q = parse_qs(url.query)
+            try:
+                f = modelador.caminho_arquivo(q["id"][0], q["f"][0])
+            except (ValueError, KeyError) as e:
+                return self._json(dict(error=str(e)), 404)
+            body = f.read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", mimetypes.guess_type(f.name)[0] or "application/octet-stream")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        if path == "/api/referencia":
+            try:
+                return self._json(modelador.estado(parse_qs(url.query).get("id", [""])[0]))
+            except ValueError as e:
+                return self._json(dict(error=str(e)), 404)
         if path == "/api/model/search":
             q = parse_qs(url.query)
             lid = int(q.get("id", ["0"])[0])
@@ -1504,6 +1524,21 @@ class H(BaseHTTPRequestHandler):
             except (ValueError, KeyError) as e:
                 return self._json(dict(error=str(e)), 400)
             return self._json(dict(ok=True))
+        if url.path == "/api/referencia/modelo":  # corpo bruto = o .stl ou .3mf enviado por você; id e nome na query
+            q = parse_qs(url.query)
+            if n > modelador.MAX_VOZ:
+                return self._json(dict(error="modelo maior que 50 MB"), 413)
+            try:
+                return self._json(modelador.gravar_modelo(q["id"][0], q["name"][0], self.rfile.read(n)))
+            except (ValueError, KeyError) as e:
+                return self._json(dict(error=str(e)), 400)
+        if url.path == "/api/referencia/voz":  # corpo bruto = a gravação da sua voz; id na query
+            if n > modelador.MAX_VOZ:
+                return self._json(dict(error="gravação maior que 50 MB"), 413)
+            try:
+                return self._json(modelador.gravar_voz(parse_qs(url.query)["id"][0], self.rfile.read(n)))
+            except (ValueError, KeyError) as e:
+                return self._json(dict(error=str(e)), 400)
         if url.path in ("/api/photo/upload", "/api/music/upload"):
             q = parse_qs(url.query)
             try:
@@ -1554,6 +1589,11 @@ class H(BaseHTTPRequestHandler):
             data = json.loads(self.rfile.read(n) or b"{}")
         except ValueError:  # JSON quebrado ou texto que não é UTF-8
             return self._json(dict(error="corpo da requisição inválido (esperado JSON em UTF-8)"), 400)
+        if url.path.startswith("/api/referencia"):
+            try:
+                return self._json(modelador.rota(url.path, data))
+            except (ValueError, TypeError, KeyError) as e:
+                return self._json(dict(error=str(e)), 400)
         path = url.path
         if path in ("/api/model", "/api/model/inbox"):
             try:

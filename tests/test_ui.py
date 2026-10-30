@@ -451,3 +451,15 @@ def test_sala_editavel_no_cartao_da_sala_virtual(gui, monkeypatch, tmp_path):
         page.wait_for_selector("#slopen")
         assert page.is_disabled("#slopen") and page.is_disabled("#sladd") and "salve (Ctrl+S) e feche" in page.inner_text("#slblend")
         b.close()
+
+
+def test_modelador_abre_e_pede_o_link(gui):
+    with playwright.sync_playwright() as p:
+        b = p.chromium.launch(channel="chrome")
+        page = b.new_page(viewport={"width": 1280, "height": 800})
+        page.goto(f"{gui}/#/modelador")
+        page.wait_for_selector("#mod-url")
+        assert page.is_visible("[data-nav=modelador]")
+        page.click("#mod-analisar")
+        page.wait_for_function("document.getElementById('mod-msg').textContent.includes('cole o link')")
+        b.close()

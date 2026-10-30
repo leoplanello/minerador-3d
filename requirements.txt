@@ -1,3 +1,5 @@
 playwright>=1.50
 pywebview>=5.0
 pillow>=10.0
+yt-dlp
+faster-whisper
