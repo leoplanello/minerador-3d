@@ -415,6 +415,62 @@ def place_custom(C, sup_top, sy):
     return extra, refs
 
 
+def mapear_materiais(pasta_texturas, json_path, materiais):
+    """Liga as texturas da pasta aos materiais importados (o FBX de Corona não traz os nós). Casa pelo nome: o material e a imagem com
+    palavras em comum. Guarda o resultado em materiais.json ao lado da sala para reaproveitar. Material sem imagem fica com a cor do FBX."""
+    import re
+    arquivos = [f for f in Path(pasta_texturas).rglob("*") if f.suffix.lower() in (".jpg", ".png")] if pasta_texturas and Path(pasta_texturas).is_dir() else []
+    if json_path.is_file():
+        mapa = json.loads(json_path.read_text(encoding="utf-8"))
+    else:
+        mapa = {}
+        palavras = lambda t: set(re.findall(r"[a-z]{3,}", t.lower()))
+        for m in materiais:
+            pm = palavras(m.name)
+            if not pm:
+                continue
+            pontos = {}
+            for f in arquivos:
+                n = f.name.lower()
+                if "ao" in n.split("_") or "mask" in n or "opacity" in n or "logo" in n or "bump" in n:
+                    continue
+                k = len(pm & palavras(f.stem))
+                if k:
+                    papel = "nrm" if re.search(r"nrm|normal|_nor", n) else "gloss" if re.search(r"gloss|rough|refl", n) else "col"
+                    if k > pontos.get(papel, (0, None))[0]:
+                        pontos[papel] = (k, f)
+            if "col" in pontos:
+                mapa[m.name] = {papel: str(f) for papel, (k, f) in pontos.items()}
+        json_path.write_text(json.dumps(mapa, ensure_ascii=False, indent=1), encoding="utf-8")
+    for m in materiais:
+        ent = mapa.get(m.name)
+        if not ent or not m.use_nodes:
+            continue
+        nt = m.node_tree
+        b = nt.nodes.get("Principled BSDF") or next((n for n in nt.nodes if n.type == "BSDF_PRINCIPLED"), None)
+        if b is None:
+            continue
+        if "col" in ent and Path(ent["col"]).is_file():
+            t = nt.nodes.new("ShaderNodeTexImage")
+            t.image = bpy.data.images.load(ent["col"], check_existing=True)
+            nt.links.new(t.outputs["Color"], b.inputs["Base Color"])
+        if "nrm" in ent and Path(ent["nrm"]).is_file():
+            t = nt.nodes.new("ShaderNodeTexImage")
+            t.image = bpy.data.images.load(ent["nrm"], check_existing=True)
+            t.image.colorspace_settings.name = "Non-Color"
+            nm = nt.nodes.new("ShaderNodeNormalMap")
+            nt.links.new(t.outputs["Color"], nm.inputs["Color"])
+            nt.links.new(nm.outputs["Normal"], b.inputs["Normal"])
+        if "gloss" in ent and Path(ent["gloss"]).is_file():
+            t = nt.nodes.new("ShaderNodeTexImage")
+            t.image = bpy.data.images.load(ent["gloss"], check_existing=True)
+            t.image.colorspace_settings.name = "Non-Color"
+            inv = nt.nodes.new("ShaderNodeInvert")  # o brilho vira rugosidade
+            nt.links.new(t.outputs["Color"], inv.inputs["Color"])
+            nt.links.new(inv.outputs["Color"], b.inputs["Roughness"])
+    return mapa
+
+
 def imported_scene():
     """Sala 3D importada (GLB ou FBX de terceiros): vira o ambiente inteiro, em mm. Procura por raycast onde a peça cabe (chão, mesa, parede ou prateleira)
     com espaço livre para a câmera e move a SALA, não a peça, para o quadro padrão da cena (parede em y = 0 voltada para -y, piso em z = 0)."""
@@ -434,6 +490,11 @@ def imported_scene():
     lo, hi = bb.bounds(meshes)
     print(f"[sala] importada: {len(meshes)} malhas, escala x{k}, tamanho {hi.x - lo.x:.0f} x {hi.y - lo.y:.0f} x {hi.z - lo.z:.0f} mm", flush=True)
     ctx.extend(new)
+    mats = {sl.material for o in meshes for sl in o.material_slots if sl.material}
+    pasta_f = Path(f).parent / "texturas" / "TEXTURES"
+    if not pasta_f.is_dir():
+        pasta_f = Path(f).parent / "texturas"
+    mapear_materiais(pasta_f, Path(f).parent / "materiais.json", list(mats))
     for o in studio + [obj, obj_ctx]:
         o.hide_viewport = True  # a peça não entra na busca por raycast
     bpy.context.view_layer.update()
@@ -536,7 +597,7 @@ def imported_scene():
     HERO = [obj_ctx] + refs
     nt = world_ctx.node_tree
     nt.nodes["Background"].inputs["Color"].default_value = (0.95, 0.93, 0.9, 1)
-    nt.nodes["Background"].inputs["Strength"].default_value = 0.45 * LUZ[0]  # luz de ambiente: o interior fechado não recebe o céu
+    nt.nodes["Background"].inputs["Strength"].default_value = 1.6 * LUZ[0]  # luz de ambiente: o interior fechado não recebe o céu
     pts = [o.matrix_world @ Vector(c) for o in HERO if o.type == "MESH" for c in o.bound_box]
     return (Vector((min(p[i] for p in pts) for i in range(3))) + Vector((max(p[i] for p in pts) for i in range(3)))) / 2
 
@@ -662,7 +723,7 @@ else:
 # luz: na sala, uma janela de área suave e quente (do lado esquerdo da câmera) mais um preenchimento fraco; no cenário simples, sol com caixilho de sombra
 if IMP:  # sala importada: luz de área suave do lado da câmera (o interior é fechado e a câmera fica dentro dele) mais o ambiente do mundo
     k = {"soft": 0.6, "normal": 1.0, "strong": 1.5}[cfg["light"]] * LUZ[3]
-    for loc, size_xy, watts, col in (((-900, -1500, 1500), (1500, 1500), 2400 * k, LUZ[1]), ((900, -1100, 1900), (1800, 1800), 700 * k, (0.9, 0.93, 1.0))):
+    for loc, size_xy, watts, col in (((-900, -1500, 1500), (1500, 1500), 9000 * k, LUZ[1]), ((900, -1100, 1900), (1800, 1800), 3000 * k, (0.9, 0.93, 1.0))):
         bpy.ops.object.light_add(type="AREA", location=target + Vector(loc))
         lt = bpy.context.object
         lt.name = "Luz da janela" if loc[0] < 0 else "Luz de apoio"
@@ -771,6 +832,8 @@ for i, (name, az, el, zoom, *rest) in enumerate(cfg["views"], 1):
         if t is not None and name != "cena_orbital":  # vídeo: da cena até a peça (que fica com 45 % da altura no fim), a lente fecha junto
             frac, fst, lens = (0.07 if stand else 0.14) + (0.38 if stand else 0.24) * t, 4.0 - 2.2 * t, 35 + 15 * t
         span = leg_span if (stand and (t is not None or name == "uso_perto")) else framed_span if name in ("uso", "cena", "cena_frontal", "cena_orbital") or t is not None else part_span  # com o objeto na cena, o enquadramento inclui o objeto
+        if IMP:  # sala importada: a peça ocupa um pouco menos do quadro, para o cômodo aparecer em volta
+            frac *= 0.6
         dist = span * lens / (36 * frac)
         if t is None:  # peça pequena: o médio e o aberto ainda mostram o ambiente (a peça fica menor que a fração pedida)
             dist = max(dist, {"uso_medio": 900, "uso_aberto": 2700}.get(name, 0))
