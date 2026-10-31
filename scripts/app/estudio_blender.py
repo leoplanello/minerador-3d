@@ -201,6 +201,11 @@ cena.render.fps = int(cfg.get("fps", 30))
 cena.render.resolution_x, cena.render.resolution_y = VERT
 cena.render.resolution_percentage = 100
 cena.cycles.samples = AMOSTRAS_VIDEO
+if cfg.get("motor_video", "CYCLES") == "EEVEE":  # giro mais rápido (sem placa de vídeo, o EEVEE também roda no processador)
+    cena.render.engine = "BLENDER_EEVEE_NEXT"
+    cena.eevee.taa_render_samples = AMOSTRAS_VIDEO
+    cena.eevee.use_shadows = True
+    cena.eevee.use_raytracing = False
 cena.render.image_settings.file_format = "PNG"
 cena.render.filepath = str(pasta_video / "frame_")
 for f in range(1, frames + 1):
