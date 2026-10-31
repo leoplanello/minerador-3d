@@ -82,7 +82,8 @@ def abrir(lid, d, popen=None):
         raise ValueError("Blender não encontrado em tools/blender")
     if lid in ABERTOS and ABERTOS[lid]["proc"].poll() is None:
         raise ValueError("a sala já está aberta no Blender: salve (Ctrl+S) e feche a janela")
-    p = (popen or proc.popen)([str(renderizar.BLENDER), str(b)], show=True)  # único programa com janela intencional
+    painel = renderizar.RESOURCES / "scripts" / "app" / "blender_painel.py"  # cria o painel Minerador (tecla N) com a luz fácil e os botões de render
+    p = (popen or proc.popen)([str(renderizar.BLENDER), str(b), "--python", str(painel), "--", str(Path(d).parent / "renders"), str(Path(d) / "previa.jpg")], show=True)  # único programa com janela intencional
     ABERTOS[lid] = dict(proc=p, desde=time.time(), pasta=str(d))
 
     def espera():

@@ -20,8 +20,8 @@ def test_helper_esconde_a_janela(monkeypatch):
     got = {}
     monkeypatch.setattr(proc.subprocess, "run", lambda *a, **kw: got.update(kw))
     proc.run(["x"])
-    assert got["creationflags"] & proc.CREATE_NO_WINDOW
-    if sys.platform == "win32":
+    if sys.platform == "win32":  # CREATE_NO_WINDOW só existe no Windows (no Linux vale 0)
+        assert got["creationflags"] & proc.CREATE_NO_WINDOW
         assert got["startupinfo"].wShowWindow == proc.subprocess.SW_HIDE
         got.clear()
         proc.run(["x"], show=True)  # Chrome e instalador precisam da janela deles

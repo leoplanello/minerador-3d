@@ -115,6 +115,7 @@ def renderizar(pasta, cfg_json, motor):
     scene.render.engine = "CYCLES" if motor == "CYCLES" else "BLENDER_EEVEE_NEXT"
     if motor == "CYCLES":
         scene.cycles.samples, scene.cycles.device, scene.cycles.use_denoising, scene.cycles.denoiser = cfg["samples_cycles"], "CPU", True, "OPENIMAGEDENOISE"
+        scene.cycles.time_limit = cfg.get("time_limit", 0)
     else:
         scene.eevee.taa_render_samples = cfg["samples_eevee"]
     scene.render.resolution_x, scene.render.resolution_y = cfg["res"]
