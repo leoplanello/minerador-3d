@@ -107,3 +107,16 @@ def test_arquivo_do_trabalho_nao_sai_da_pasta(tmp_path, monkeypatch):
             modelador.caminho_arquivo("abc123", ruim)
     with pytest.raises(ValueError):
         modelador.caminho_arquivo("nao-existe", "original")
+
+
+def test_comando_powershell_tem_url_validada_e_pasta(tmp_path):
+    url = "https://www.instagram.com/reel/C8xYz12AbCd/"
+    cmd = referencia.comando_powershell(url, tmp_path)
+    assert cmd.startswith('& "$env:LOCALAPPDATA\\Minerador3D\\tools\\yt-dlp\\yt-dlp.exe"')
+    assert f'"{url}"' in cmd and "--write-info-json" in cmd and "--no-playlist" in cmd
+    assert str(tmp_path) in cmd and "original.%(ext)s" in cmd
+
+
+def test_comando_powershell_recusa_url_fora_da_lista(tmp_path):
+    with pytest.raises(ValueError):
+        referencia.comando_powershell('https://evil.com/x";calc', tmp_path)

@@ -43,7 +43,7 @@ def baixar(url, pasta):
     """Baixa o vídeo com yt-dlp (até 1080p, um arquivo só, sem ffmpeg) e devolve título, descrição e o caminho do vídeo."""
     import yt_dlp  # importado aqui: o app abre sem ele e só falha quando alguém pede um link
     plataforma = validar_link(url)
-    opts = dict(outtmpl=str(pasta / "original.%(ext)s"), format="best[ext=mp4][height<=1080]/best[height<=1080]/best",
+    opts = dict(outtmpl=str(pasta / "original.%(ext)s"), format=FORMATO,
                 noplaylist=True, quiet=True, no_warnings=True, max_filesize=300 * 1024 * 1024)
     with yt_dlp.YoutubeDL(opts) as ydl:
         info = ydl.extract_info(url, download=True)
@@ -51,6 +51,31 @@ def baixar(url, pasta):
     if arquivo is None:
         raise ValueError("o vídeo não foi baixado")
     return dict(plataforma=plataforma, titulo=info.get("title") or "", descricao=info.get("description") or "", video=str(arquivo))
+
+
+FORMATO = "best[ext=mp4][height<=1080]/best[height<=1080]/best"
+YTDLP_EXE = r"$env:LOCALAPPDATA\Minerador3D\tools\yt-dlp\yt-dlp.exe"
+
+
+def comando_powershell(url, pasta):
+    """Comando de PowerShell que baixa o vídeo e o texto do post com o yt-dlp. A tela mostra o comando e o app também o executa."""
+    validar_link(url)  # a URL vai dentro do comando: só entra o que já passou na validação
+    return (f'& "{YTDLP_EXE}" -f "{FORMATO}" --no-playlist --write-info-json '
+            f'-o "{pasta}\\original.%(ext)s" "{url.strip()}"')
+
+
+def baixar_powershell(url, pasta):
+    """Roda o comando de PowerShell (o mesmo que a tela mostra) e devolve o mesmo dicionário de baixar()."""
+    import json
+    plataforma = validar_link(url)
+    r = proc.run(["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", comando_powershell(url, pasta)],
+                 capture_output=True, text=True, timeout=1800)
+    arquivo = next(pasta.glob("original.*"), None)
+    if r.returncode != 0 or arquivo is None or arquivo.suffix == ".json":
+        raise ValueError("o PowerShell não baixou o vídeo: " + ((r.stderr or r.stdout or "")[-300:]))
+    info = next(pasta.glob("original*.info.json"), None)
+    dados = json.loads(info.read_text(encoding="utf-8")) if info else {}
+    return dict(plataforma=plataforma, titulo=dados.get("title") or "", descricao=dados.get("description") or "", video=str(arquivo))
 
 
 def transcrever(video_path, modelo=WHISPER_MODELO):

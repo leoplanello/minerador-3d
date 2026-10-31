@@ -29,20 +29,32 @@ def estado(jid):
         return dict(job)
 
 
-def iniciar(url):
-    """Valida o link na hora (erro na tela) e começa o download e a transcrição em segundo plano."""
+def iniciar(url, metodo="python"):
+    """Valida o link na hora (erro na tela) e começa o download e a transcrição em segundo plano.
+    metodo='python' usa o yt-dlp do próprio app; 'powershell' roda o mesmo download pelo comando de PowerShell."""
     referencia.validar_link(url)
     pasta = referencia.nova_pasta(url)
     jid = pasta.name
     with LOCK:
-        JOBS[jid] = dict(id=jid, status="running", etapa="baixando", msg="Baixando o vídeo…", url=url)
-    threading.Thread(target=_rodar_download, args=(jid, url, pasta), daemon=True).start()
+        JOBS[jid] = dict(id=jid, status="running", etapa="baixando", msg="Baixando o vídeo…", url=url,
+                         comando=referencia.comando_powershell(url, pasta))
+    threading.Thread(target=_rodar_download, args=(jid, url, pasta, metodo), daemon=True).start()
     return estado(jid)
 
 
-def _rodar_download(jid, url, pasta):
+def baixar_de_novo(jid, metodo="powershell"):
+    """Tenta o download de novo (por exemplo pelo PowerShell, quando o do app falha)."""
+    job = estado(jid)
+    if job.get("status") == "running" and job.get("etapa") == "baixando":
+        raise ValueError("o download já está em andamento")
+    _set(jid, status="running", etapa="baixando", msg="Baixando o vídeo…")
+    threading.Thread(target=_rodar_download, args=(jid, job["url"], referencia.PASTA / jid, metodo), daemon=True).start()
+    return estado(jid)
+
+
+def _rodar_download(jid, url, pasta, metodo="python"):
     try:
-        d = referencia.baixar(url, pasta)
+        d = referencia.baixar_powershell(url, pasta) if metodo == "powershell" else referencia.baixar(url, pasta)
     except Exception as e:  # yt-dlp levanta erros próprios; a tela só precisa da mensagem
         _set(jid, status="error", etapa="erro", msg=f"Não consegui baixar o vídeo: {str(e)[:260]}")
         return
@@ -104,8 +116,8 @@ def gravar_modelo(jid, nome, dados):
     pasta = referencia.PASTA / jid
     destino = pasta / ("modelo" + Path(nome).suffix.lower())
     destino.write_bytes(dados)
-    _set(jid, modelo=str(destino), msg="Modelo recebido. Já pode gerar o estúdio.")
-    return estado(jid)
+    _set(jid, modelo=str(destino), modelo_origem="enviado por você")
+    return estudio_do_modelo(jid)  # enviado o arquivo, o estúdio começa sozinho
 
 
 def estudio_do_modelo(jid, indice=0, cor=estudio.COR_PADRAO):
@@ -163,7 +175,9 @@ def caminho_arquivo(jid, nome):
 def rota(path, data):
     """Despacha as rotas JSON /api/referencia/*."""
     if path == "/api/referencia":
-        return iniciar(str(data["url"]))
+        return iniciar(str(data["url"]), str(data.get("metodo", "python")))
+    if path == "/api/referencia/baixar-de-novo":
+        return baixar_de_novo(str(data["id"]), str(data.get("metodo", "powershell")))
     if path == "/api/referencia/aplicar-voz":
         return aplicar_voz(str(data["id"]))
     if path == "/api/referencia/buscar":

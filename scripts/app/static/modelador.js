@@ -56,6 +56,12 @@ async function modGravar() {
   modDraw();
 }
 
+async function modBaixarPs() {
+  const j = await post('/api/referencia/baixar-de-novo', {id: MOD.id, metodo: 'powershell'});
+  if (j.error) return modMsg(j.error, true);
+  MOD.job = j; modDraw(); modPoll();
+}
+
 async function modAplicarVoz() {
   modMsg('Trocando o áudio do vídeo…');
   const j = await post('/api/referencia/aplicar-voz', {id: MOD.id});
@@ -81,7 +87,7 @@ async function modEnviarModelo(input) {
   const r = await fetch('/api/referencia/modelo?id=' + encodeURIComponent(MOD.id) + '&name=' + encodeURIComponent(f.name), {method: 'POST', body: f});
   const j = await r.json();
   if (j.error) return modMsg(j.error, true);
-  MOD.job = j; modDraw();
+  MOD.job = j; modDraw(); modPoll();
 }
 
 function modDraw() {
@@ -91,6 +97,9 @@ function modDraw() {
   const etapa = MOD_ETAPAS[j.etapa] || j.etapa || '';
   const linhas = [];
   linhas.push(`<p class="small mut">${esc(etapa)}${j.plataforma ? ' · ' + (j.plataforma === 'instagram' ? 'Instagram' : 'YouTube Shorts') : ''}</p>`);
+  if (j.comando && !j.video) linhas.push(`<details class="mod-comando"><summary>Comando de download (PowerShell)</summary>
+      <pre class="mod-texto">${esc(j.comando)}</pre><button id="mod-copiar" class="sm">Copiar comando</button>
+      ${j.status === 'error' ? '<button id="mod-baixar-ps" class="pri">Baixar agora pelo PowerShell</button>' : ''}</details>`);
   if (j.video) linhas.push(`<video class="mod-video" controls playsinline src="/api/referencia/arquivo?id=${encodeURIComponent(MOD.id)}&f=original"></video>`);
   if (j.titulo) linhas.push(`<h3>${esc(j.titulo)}</h3>`);
   if (j.descricao) linhas.push(`<details><summary>Texto do post</summary><p class="mod-texto">${esc(j.descricao)}</p></details>`);
@@ -106,12 +115,12 @@ function modDraw() {
   if (j.modelos) {
     linhas.push(j.modelos.length ? '<div class="mod-modelos">' + j.modelos.map((m, i) => `<div class="card mod-modelo">
         ${m.thumb ? `<img src="${esc(m.thumb)}" alt="">` : ''}
-        <div><b>${esc(m.title)}</b><div class="small mut">${esc(m.author || '')} · ${esc(m.license || 'licença não informada')}${m.commercial ? '' : ' · uso comercial não permitido'}</div>
+        <div><b>${esc(m.title)}</b><div class="small mut">${esc(m.author || '')}</div>
         <button class="sm mod-usar" data-i="${i}">Usar este modelo</button></div></div>`).join('') + '</div>'
       : '<p class="small mut">Nenhum modelo encontrado. Envie o arquivo do modelo.</p>');
     if (j.avisos && j.avisos.length) linhas.push(`<p class="small mut">${esc(j.avisos.join(' · '))}</p>`);
   }
-  if (j.modelo) linhas.push(`<div class="row"><label class="sm">Cor do produto <input type="color" id="mod-cor" value="${esc(MOD.cor)}"></label><button id="mod-estudio" class="pri">Gerar o estúdio (fotos 1:1, medidas e giro 9:16)</button></div>`);
+  if (j.modelo && j.etapa !== 'estudio' && !j.estudio) linhas.push(`<div class="row"><label class="sm">Cor do produto <input type="color" id="mod-cor" value="${esc(MOD.cor)}"></label><button id="mod-estudio" class="pri">Gerar o estúdio (fotos 1:1, medidas e giro 9:16)</button></div>`);
   if (j.estudio) {
     const e = j.estudio, dims = e.dimensoes_mm ? e.dimensoes_mm.map(v => Math.round(v)).join(' × ') + ' mm' : '';
     linhas.push(`<h3>Estúdio</h3><p class="small">Medidas: ${esc(dims)}</p>
@@ -125,6 +134,8 @@ function modDraw() {
   on('mod-aplicar', modAplicarVoz);
   on('mod-buscar', modBuscar);
   on('mod-estudio', () => modEstudio(0));
+  on('mod-copiar', () => { navigator.clipboard?.writeText(j.comando).then(() => modMsg('Comando copiado: cole no PowerShell.')); });
+  on('mod-baixar-ps', modBaixarPs);
   const cor = $('mod-cor');
   if (cor) cor.oninput = () => { MOD.cor = cor.value; };
   document.querySelectorAll('.mod-usar').forEach(b => b.onclick = () => modEstudio(Number(b.dataset.i)));

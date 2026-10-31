@@ -189,7 +189,7 @@ def cotas_2d(origem, medidas, destino):
     im.save(destino)
 
 
-def gerar(modelo, pasta, cor=COR_PADRAO, amostras=256, frames=120, fps=30):
+def gerar(modelo, pasta, cor=COR_PADRAO, amostras=128, frames=100, fps=25):
     """modelo: .stl ou .3mf. Gera tudo em pasta/ e devolve os caminhos e as medidas (mm)."""
     modelo, pasta = Path(modelo), Path(pasta)
     blender = _blender()
@@ -206,7 +206,7 @@ def gerar(modelo, pasta, cor=COR_PADRAO, amostras=256, frames=120, fps=30):
         else:
             shutil.copyfile(modelo, stl)
         cfg = trabalho / "cfg.json"
-        cfg.write_text(json.dumps(dict(cor=cor_linear(cor), amostras=amostras, frames=frames, fps=fps, quadrado=1920, vertical_w=1080, vertical_h=1920)), encoding="utf-8")
+        cfg.write_text(json.dumps(dict(cor=cor_linear(cor), amostras=amostras, amostras_video=32, frames=frames, fps=fps, quadrado=1920, vertical_w=1080, vertical_h=1920)), encoding="utf-8")
         r = proc.run([str(blender), "-b", "--factory-startup", "-P", str(SCENE), "--", str(stl), str(pasta), str(cfg)],
                      capture_output=True, text=True, timeout=6 * 3600)
         m = re.search(r"CONCLUIDO (\{.*\})", r.stdout or "")
