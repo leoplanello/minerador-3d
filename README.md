@@ -36,6 +36,10 @@ python -m pytest tests             # os testes que precisam de Bambu Studio, Ble
 
 Estrutura: `scripts/app` (servidor, telas em `static/`, fatiamento, imagens, vídeo, atualização), `scripts/mine` (leitura de lojas e busca de modelos), `db/schema.sql` (banco), `build/` (empacotamento), `tests/`.
 
+## Notas da versão 1.4.0
+
+- **Salas 3D importadas: em teste.** Ainda não estão prontas para uso. A sala importada do escritório sai com materiais cinza (materiais Corona não ligados) e o apartamento de 1,6 GB ainda não foi testado. Use as salas padrão até a próxima versão.
+
 ## Gerar o instalador e publicar uma versão
 
 ```bash
