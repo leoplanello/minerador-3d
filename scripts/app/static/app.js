@@ -244,6 +244,13 @@ const VIEWS = {
         <div class="row" style="margin:12px 0"><div class="seg" role="group" aria-label="Prévia"><button data-pv="ml" aria-pressed="true">Prévia Mercado Livre</button><button data-pv="shopee" aria-pressed="false">Prévia Shopee</button></div>
           <span class="grow"></span><a id="kzip" class="btn" href="#">Baixar kit (.zip)</a><button id="kok" class="pri">Confirmar kit</button></div>
         <div id="kprev"></div></div>
+      <div class="card" id="pcard" hidden><div class="card-h"><h2>Pronto para publicar</h2><span id="pchip" class="chip"></span></div>
+        <p id="pstate" class="small mut" style="margin:0 0 12px">Publique à mão no Mercado Livre: copie cada campo, cole no cadastro e depois marque o link aqui.</p>
+        <div id="pcampos" class="pcampos"></div>
+        <div class="row" style="margin:12px 0"><button data-abrir="pasta">Abrir pasta</button><a id="pzip" class="btn" href="#">Baixar tudo (.zip)</a></div>
+        <h3 class="small" style="margin:12px 0 4px">Impressão (só depois da venda)</h3>
+        <div class="row"><button data-abrir="modelo" id="pmodelo">Abrir modelo</button><button data-abrir="bambu" id="pbambu">Abrir no Bambu Studio</button><span id="ptempo" class="small mut"></span></div>
+        <div class="row" style="margin-top:12px"><input id="purl" type="url" placeholder="Link do anúncio no Mercado Livre" style="flex:1;height:40px"><button id="pmarca" class="pri">Marcar como publicado</button></div></div>
       <div class="card" id="mlcard" hidden><div class="card-h"><h2>Publicar no Mercado Livre</h2><span id="mlchip" class="chip"></span></div>
         <p id="mlstate" class="small mut" style="margin:0 0 12px"></p>
         <div id="mlform" class="form" hidden>
@@ -282,6 +289,12 @@ const VIEWS = {
       $('vgo').onclick = async () => { const vc = cfgRead('v', VID_FIELDS);
         if (vc.motion === 'camera' && vc.engine === 'cycles' && !confirm(($('vest').textContent.match(/Tempo estimado: [^(]*/) || ['Vai demorar horas'])[0] + '. Renderizar o vídeo em Cycles mesmo assim?')) return; const sv = await post('/api/media/config', {video: cfgRead('v', VID_FIELDS)}); if (sv.error) return toast(sv.error);
         const r = await post('/api/video', {id: id()}); toast(r.error || 'Gerando o vídeo…'); load(); };
+      $('pcard').onclick = async e => {
+        const cp = e.target.closest('[data-copy]'), ab = e.target.closest('[data-abrir]');
+        if (cp) { try { await navigator.clipboard.writeText(PCOPY[+cp.dataset.copy]); toast('Copiado'); } catch (err) { toast('Não consegui copiar: selecione o texto e copie'); } }
+        if (ab) { const r = await post('/api/abrir', {id: id(), what: ab.dataset.abrir}); toast(r.error || 'Aberto'); }
+      };
+      $('pmarca').onclick = async () => { const r = await post('/api/publicado', {id: id(), channel: 'ml', url: $('purl').value}); toast(r.error || 'Marcado como publicado'); load(); };
       $('shdone').onclick = async () => { const r = await post('/api/shopee/done', {id: id(), url: $('shurl').value}); toast(r.error || 'Marcado como publicado'); load(); };
       $('mlsearch').onclick = async () => { const r = await (await fetch('/api/ml/categories?q=' + encodeURIComponent($('mlq').value))).json();
         $('mlcats').innerHTML = r.error ? `<p class="small" style="color:var(--red)">${esc(r.error)}</p>` : r.map((c, i) => `<label class="row" style="flex-direction:row;gap:8px;color:var(--fg);font-size:14px"><input type="radio" name="mlcat" value="${esc(c.category_id)}" ${i ? '' : 'checked'}> ${esc(c.name || c.domain)} <span class="mut small">${esc(c.category_id)}</span></label>`).join('');
@@ -385,6 +398,7 @@ const VIEWS = {
             <ul>${k.bullets.map(b => `<li>${esc(b)}</li>`).join('')}</ul><button class="buy" disabled>${pv === 'ml' ? 'Comprar agora' : 'Comprar'}</button></div>
           <div class="pdesc"><h4>Descrição</h4><p>${esc(k.description).replace(/\n/g, '<br>')}</p></div></div>`;
       }
+      renderPack(c);
       $('vcard').hidden = !c.images.length || !c.kit;
       const vs = c.steps.video || 'pending';
       $('vchip').className = 'chip ' + vs; $('vchip').textContent = {pending:'Falta gerar', running:'Gerando', ok:'Pronto', error:'Erro'}[vs] || vs;
@@ -405,7 +419,7 @@ const VIEWS = {
           $('mlchip').className = 'chip ' + (pub ? 'ok' : m.connected ? 'running' : 'blocked'); $('mlchip').textContent = pub ? 'Publicado' : m.connected ? 'Conta conectada' : m.configured ? 'Falta conectar' : 'Falta configurar';
           $('mlform').hidden = !m.connected || !!pub;
           $('mlstate').innerHTML = pub ? `Publicado: <a href="${esc(pub.url)}" target="_blank" rel="noopener">${esc(pub.external_id)}</a>` : m.connected ? 'Escolha a categoria, valide e publique. Nada vai ao ar sem o seu segundo clique.'
-            : 'Antes de publicar, conecte sua conta em <a href="#/config">Configurações</a> (App ID, Secret Key e login).'; });
+            : 'A publicação pela API está desligada: não há conta do Mercado Livre conectada. Publique à mão pelo cartão Pronto para publicar.'; });
       }
       $('icard').hidden = !hasFile && !c.media.length;
       const is = c.steps.images || 'pending';
@@ -506,6 +520,33 @@ function warnings(c) {
   return w;
 }
 // o produto de relance: anúncio de origem, modelo escolhido (exatamente qual), números e texto
+let PCOPY = [];
+// cartão Pronto para publicar: campos para copiar e o que o cadastro manual pede
+async function renderPack(c) {
+  $('pcard').hidden = !c.kit;
+  if (!c.kit) return;
+  const k = await (await fetch('/api/publicar?id=' + c.id)).json();
+  if (k.error || route[1] !== String(c.id) || !$('pcard')) return;
+  const campos = [['Título', k.titulo, k.titulo], ['Descrição', k.descricao, k.descricao],
+    ['Ficha técnica (bullets)', k.bullets.map(b => '- ' + b).join('\n'), k.bullets.map(b => '- ' + b).join('\n')],
+    ['Palavras-chave', k.palavras_chave.join(', '), k.palavras_chave.join(', ')],
+    ['Preço', `${brl(k.preco)} · mínimo para a margem de ${pct(k.margem_alvo)}: ${brl(k.preco_minimo)}`, k.preco == null ? '' : Number(k.preco).toFixed(2)],
+    ['Categoria sugerida', k.categorias.length ? k.categorias.map(x => x.nome).join(' · ') : 'Não sugerida: busque pelo título no cadastro do Mercado Livre', k.categorias[0] ? k.categorias[0].nome : ''],
+    ['Créditos do modelo', k.creditos, k.creditos],
+    ['Prazo de produção e envio', `${k.prazo_dias} dias`, String(k.prazo_dias)]];
+  PCOPY = campos.map(x => x[2]);
+  $('pcampos').innerHTML = campos.map(([l, v, cp], i) => `<div class="pcampo"><div class="grow"><b class="small">${esc(l)}</b><div class="pv">${esc(v).replace(/\n/g, '<br>')}</div></div>${cp ? `<button class="sm" data-copy="${i}">Copiar</button>` : ''}</div>`).join('')
+    + `<div class="pcampo"><div class="grow"><b class="small">Imagens na ordem do kit${k.video ? ' + vídeo' : ''}</b><div class="pv small">${k.imagens.map(esc).join('<br>') || 'Gere as imagens primeiro.'}</div></div></div>`;
+  $('pchip').className = 'chip ' + (k.publicado ? 'ok' : k.confirmado ? 'running' : 'pending');
+  $('pchip').textContent = k.publicado ? 'Publicado' : k.confirmado ? 'Pronto' : 'Confirme o kit';
+  $('pstate').innerHTML = (k.confirmado ? '' : 'Confirme o kit acima antes de publicar; o texto pode mudar. ')
+    + 'Publique à mão no Mercado Livre: copie cada campo, cole no cadastro e depois marque o link aqui.'
+    + (k.publicado && k.publicado.url ? ` Publicado: <a href="${esc(k.publicado.url)}" target="_blank" rel="noopener">${esc(k.publicado.url)}</a>` : '');
+  $('pzip').href = `/api/kit/${c.id}.zip`;
+  $('pmodelo').disabled = !k.modelo; $('pbambu').disabled = !k.modelo;
+  $('ptempo').textContent = k.tempo_min ? `${Math.floor(k.tempo_min / 60)} h ${k.tempo_min % 60} min · ${Number(k.gramas).toLocaleString('pt-BR', {minimumFractionDigits: 1, maximumFractionDigits: 1})} g de PLA` : 'Fatie para ver tempo e gramas.';
+}
+
 function overview(c) {
   const m = c.model || {}, mi = m.info || {}, sl = c.slice, M = c.margin, k = c.kit, ms = c.msearch || {};
   const btn = (u, t, chrome) => `<button class="sm ghost" data-open="${esc(u)}" ${chrome ? 'data-chrome="1"' : ''}>${t}</button>`;

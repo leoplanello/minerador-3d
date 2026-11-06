@@ -7,6 +7,7 @@ import re
 import sqlite3
 import zipfile
 import mimetypes
+import shutil
 from datetime import datetime
 import sys
 import time
@@ -368,13 +369,69 @@ def kit_zip(lid):
         z.writestr("dados.json", json.dumps(dict(titulo=k["title"], preco=cand["target_price"], palavras_chave=k["keywords"],
                                                  tempo_min=sl["minutes"] if sl else None, gramas=sl["grams"] if sl else None,
                                                  margem=cand["margin"], origem=cand["url"]), ensure_ascii=False, indent=1))
-        for i, n in enumerate(cand["images"], 1):  # a ordem do kit é a da tela: "01-" na frente do nome para a Central do Vendedor respeitar a capa
-            z.write(PRODUCTS / str(lid) / "renders" / n, f"imagens/{i:02d}-{'foto-real' if n.startswith('photo') else 'ambiente-3d'}-{n}")
-        am = cand["amostra"]
+        for arc, n in ordem_kit(cand):
+            z.write(PRODUCTS / str(lid) / "renders" / n, f"imagens/{arc}")
         z.writestr("LEIA-ME-fotos.txt", leia_me_fotos(cand))
         if (cena_dir(lid) / "video.mp4").is_file():
             z.write(cena_dir(lid) / "video.mp4", "video-sala-virtual.mp4")
+        if (PRODUCTS / str(lid) / "kit" / "video.mp4").is_file():
+            z.write(PRODUCTS / str(lid) / "kit" / "video.mp4", "video-anuncio.mp4")
     return buf.getvalue()
+
+
+def ordem_kit(cand):
+    """Nomes do kit na ordem da tela: "01-" na frente para a Central do Vendedor respeitar a capa. Devolve [(nome no kit, nome do render)]."""
+    return [(f"{i:02d}-{'foto-real' if n.startswith('photo') else 'ambiente-3d'}-{n}", n) for i, n in enumerate(cand["images"], 1)]
+
+
+def publicar_pack(lid):
+    """Texto, preço, créditos e prazo para colar no cadastro manual do Mercado Livre. A categoria vem da busca pública do ML e fica guardada."""
+    cand = next((c for c in candidates() if c["id"] == lid), None)
+    if not cand or not cand["kit"]:
+        raise ValueError("o produto ainda não tem texto")
+    k, model, sl = cand["kit"], cand["model"] or {}, cand["slice"]
+    ml_margin = (cand["margin"] or {}).get("ml") or {}
+    cat = get_setting(f"categorias:{lid}")
+    if cat is None:
+        try:
+            cat = [dict(id=x["category_id"], nome=x["name"] or x["domain"]) for x in ml.categories(k["title"])]
+            put_setting(f"categorias:{lid}", cat)  # busca pública: guarda mesmo vazia, para não repetir a chamada
+        except Exception:
+            cat = []  # sem internet: a categoria fica para escolher no cadastro, sem erro
+    return dict(titulo=k["title"], descricao=k["description"], bullets=k["bullets"], palavras_chave=k["keywords"], confirmado=bool(k["confirmed"]),
+                preco=cand["target_price"], preco_minimo=ml_margin.get("preco_minimo"), lucro=ml_margin.get("lucro"), margem_alvo=get_costs()["margem_alvo_pct"],
+                categorias=cat, creditos=f"Modelo original: {model.get('source_url') or 'não informado'}. Licença: {model.get('license_note') or 'não informada'}.",
+                prazo_dias=get_business()["prazo_dias"], tempo_min=sl["minutes"] if sl else None, gramas=sl["grams"] if sl else None,
+                imagens=[arc for arc, _ in ordem_kit(cand)], video=(PRODUCTS / str(lid) / "kit" / "video.mp4").is_file(),
+                modelo=bool(model.get("file_path")), fatia=bool(cand["slice_file"]), publicado=cand["publications"].get("ml"))
+
+
+def abrir_arquivo(lid, what):
+    """Abre no Windows a pasta do kit, o modelo ou o modelo fatiado no Bambu Studio. Só arquivos deste produto."""
+    cand = next((c for c in candidates() if c["id"] == lid), None)
+    if not cand:
+        raise ValueError("produto não encontrado")
+    if what == "pasta":
+        d = PRODUCTS / str(lid) / "publicar"
+        shutil.rmtree(d, ignore_errors=True)
+        d.mkdir(parents=True)
+        for arc, n in ordem_kit(cand):
+            shutil.copy(PRODUCTS / str(lid) / "renders" / n, d / arc)
+        if (PRODUCTS / str(lid) / "kit" / "video.mp4").is_file():
+            shutil.copy(PRODUCTS / str(lid) / "kit" / "video.mp4", d / "video-anuncio.mp4")
+        proc.popen(["explorer", str(d)])  # abre a pasta no Explorer
+    elif what in ("modelo", "bambu"):
+        model = ROOT / cand["model"]["file_path"] if cand["model"] and cand["model"]["file_path"] else None
+        if not model or not model.is_file():
+            raise ValueError("envie o modelo 3D antes")
+        if what == "modelo":
+            proc.popen(["explorer", str(model)])  # o Windows abre com o programa padrão
+        else:
+            if not fatiar.SLICER.exists():
+                raise ValueError("Bambu Studio não encontrado em tools/bambustudio")
+            proc.popen([str(fatiar.SLICER), str(ROOT / cand["slice_file"] if cand["slice_file"] else model)])
+    else:
+        raise ValueError("abrir o quê? use pasta, modelo ou bambu")
 
 
 def ml_item(lid, category_id, attributes, quantity):
@@ -398,15 +455,22 @@ def ml_publish(lid, category_id, attributes, quantity):
     return ext_id, link
 
 
-def mark_shopee(lid, url):
+def mark_publicado(lid, channel, url):
+    """Marcação manual (Mercado Livre ou Shopee) com o link do anúncio, que alimenta o funil de desempenho."""
+    if channel not in ("ml", "shopee"):
+        raise ValueError("canal inválido")
     if url and not re.match(r"https://", url):
         raise ValueError("o link deve começar com https://")
     with lock, db() as c:
-        if not c.execute("SELECT 1 FROM steps WHERE listing_id=? AND name='shopee'", (lid,)).fetchone():
+        if not c.execute("SELECT 1 FROM steps WHERE listing_id=? AND name=?", (lid, channel)).fetchone():
             raise ValueError("produto não encontrado")
         c.execute("INSERT INTO publications(listing_id,channel,url) VALUES(?,?,?) ON CONFLICT(listing_id,channel) DO UPDATE SET url=excluded.url, status='published', ts=CURRENT_TIMESTAMP",
-                  (lid, "shopee", url[:500]))
-        c.execute("UPDATE steps SET status='ok' WHERE listing_id=? AND name='shopee'", (lid,))
+                  (lid, channel, url[:500]))
+        c.execute("UPDATE steps SET status='ok' WHERE listing_id=? AND name=?", (lid, channel))
+
+
+def mark_shopee(lid, url):
+    mark_publicado(lid, "shopee", url)
 
 
 VOICE_EXT = {".wav", ".mp3", ".m4a", ".ogg"}
@@ -1401,6 +1465,11 @@ class H(BaseHTTPRequestHandler):
             return self._json(get_onboarding())
         if path == "/api/media/config":
             return self._json(media_config())
+        if path == "/api/publicar":
+            try:
+                return self._json(publicar_pack(int(parse_qs(url.query).get("id", ["0"])[0])))
+            except (ValueError, TypeError) as e:
+                return self._json(dict(error=str(e)), 400)
         if path == "/api/video/estimate":
             q = parse_qs(url.query)
             try:
@@ -1792,10 +1861,19 @@ class H(BaseHTTPRequestHandler):
             except (ValueError, TypeError, KeyError) as e:
                 return self._json(dict(error=f"valor inválido: {e}"), 400)
             return self._json(dict(ok=True))
-        if path == "/api/shopee/done":  # a Shopee é publicada por você; aqui só se registra o link
+        if path in ("/api/shopee/done", "/api/publicado"):  # Shopee e Mercado Livre são publicadas por você; aqui só se registra o link
             try:
-                mark_shopee(int(data["id"]), str(data.get("url", "")).strip())
+                if path == "/api/shopee/done":
+                    mark_shopee(int(data["id"]), str(data.get("url", "")).strip())
+                else:
+                    mark_publicado(int(data["id"]), data.get("channel", "ml"), str(data.get("url", "")).strip())
             except (ValueError, TypeError, KeyError) as e:
+                return self._json(dict(error=str(e)), 400)
+            return self._json(dict(ok=True))
+        if path == "/api/abrir":
+            try:
+                abrir_arquivo(int(data["id"]), str(data.get("what", "")))
+            except (ValueError, TypeError, KeyError, OSError) as e:
                 return self._json(dict(error=str(e)), 400)
             return self._json(dict(ok=True))
         if path in ("/api/ml/config", "/api/ml/code", "/api/ml/validate", "/api/ml/publish"):

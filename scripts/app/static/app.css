@@ -158,6 +158,8 @@ th { border-top:0 } .th { height:auto; padding:0; background:none; color:var(--m
 .preview.ml .buy { background:#3483FA } .preview.shopee .buy { background:#EE4D2D } .preview.shopee .price { color:#EE4D2D; font-weight:500 } .preview.shopee h3 { font-weight:500 }
 .pdesc { grid-column:1/-1; border-top:1px solid #eee; padding-top:14px } .pdesc h4 { margin:0 0 8px } .pdesc p { margin:0; line-height:1.6; font-size:14px; overflow-wrap:anywhere }
 @media (max-width:760px) { .preview { grid-template-columns:1fr } }
+.pcampo { display:flex; gap:12px; align-items:flex-start; padding:8px 0; border-top:1px solid var(--line) }
+.pcampo .pv { white-space:pre-wrap; overflow-wrap:anywhere; font-size:14px }
 code { background:var(--bg); padding:1px 5px; border-radius:4px; overflow-wrap:anywhere }
 
 /* alça de arrastar */
