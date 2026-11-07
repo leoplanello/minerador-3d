@@ -694,7 +694,7 @@ def room_scene():
 
 def tigela(size, cor):
     """Fundo de estúdio: um piso que sobe em curva suave até a parede (sem quina nem linha de horizonte), em volta da peça. Medidas proporcionais ao tamanho dela."""
-    r1, rc, top = 6 * size, 3 * size, 12 * size
+    r1, rc, top = 10 * size, 6 * size, 16 * size  # curva mais longa e suave: sem linha de horizonte visível
     arco = [(r1 + rc * math.sin(math.radians(f)), rc - rc * math.cos(math.radians(f))) for f in range(0, 91, 10)]  # quarto de círculo: do piso até a parede
     perfil = [(0.0, 0.0)] + arco + [(r1 + rc, top)]
     N = 96
@@ -707,6 +707,37 @@ def tigela(size, cor):
     bpy.context.collection.objects.link(ob)
     ob.data.materials.append(make_mat("fundo-estudio", 0.95, Base_Color=(*cor, 1))[0])
     return ob
+
+
+def sombra_contato(mat, lo, hi):
+    """Sombra de contato pintada no próprio piso: um degradê escuro em volta da base da peça, no material opaco do fundo.
+    (Um plano transparente com a sombra deixava o render cerca de 4 vezes mais lento.)
+    shortcut: a sombra fica fixa no centro da peça; se a peça for movida, o degradê não acompanha."""
+    n = 128
+    img = bpy.data.images.new("sombra-contato-img", n, n, alpha=True)
+    px = []
+    for y in range(n):
+        for x in range(n):
+            d = math.hypot((x + 0.5) / n * 2 - 1, (y + 0.5) / n * 2 - 1)
+            px += [0.0, 0.0, 0.0, 0.8 * max(0.0, 1 - d) ** 2]
+    img.pixels = px
+    r = max(hi.x - lo.x, hi.y - lo.y) * 0.75 + 6  # raio da sombra, em mm, a partir do centro da peça
+    nt = mat.node_tree
+    b = nt.nodes["Principled BSDF"]
+    base = tuple(b.inputs["Base Color"].default_value)
+    tc, mp = nt.nodes.new("ShaderNodeTexCoord"), nt.nodes.new("ShaderNodeMapping")
+    mp.inputs["Location"].default_value = (0.5, 0.5, 0)
+    mp.inputs["Scale"].default_value = (1 / (2 * r), 1 / (2 * r), 1)
+    tex = nt.nodes.new("ShaderNodeTexImage")
+    tex.image, tex.extension = img, "EXTEND"
+    mix = nt.nodes.new("ShaderNodeMixRGB")
+    mix.blend_type = "MIX"
+    mix.inputs["Color1"].default_value = base
+    mix.inputs["Color2"].default_value = (base[0] * 0.25, base[1] * 0.25, base[2] * 0.25, 1)
+    nt.links.new(tc.outputs["Object"], mp.inputs["Vector"])
+    nt.links.new(mp.outputs["Vector"], tex.inputs["Vector"])
+    nt.links.new(tex.outputs["Alpha"], mix.inputs["Fac"])
+    nt.links.new(mix.outputs["Color"], b.inputs["Base Color"])
 
 
 def estudio_scene():
@@ -734,10 +765,13 @@ def estudio_scene():
         bpy.ops.object.light_add(type="AREA", location=loc)  # uma luz grande em cima (o piso e a peça) e seis suaves em anel (a parede curva): simétricas, o fundo tem o mesmo brilho em todo o giro
         lt = bpy.context.object
         top = loc[2] > size_ * 3
-        lt.name, lt.data.energy, lt.data.size = "Luz de estúdio", (70 if top else 12) * size_ ** 2, size_ * (4 if top else 2)
+        lt.name, lt.data.energy, lt.data.size = "Luz de estúdio", (120 if top else 20) * size_ ** 2, size_ * (4 if top else 2)
         aim(lt, Vector((0, 0, size_ / 2)))
         ctx.append(lt)
     ctx.append(tigela(size_, bg))
+    fundo = tigela(size_, bg)
+    ctx.append(fundo)
+    sombra_contato(fundo.data.materials[0], lo_, hi_)
     refs = reference_object(C["referencia"], hi_.x + 40, 0, 0)
     for o in refs:
         o["m3d_tipo"] = "referencia"
@@ -747,7 +781,7 @@ def estudio_scene():
     nt = world_ctx.node_tree  # mundo liso na cor do fundo: luz uniforme em volta (um HDRI aparece como manchas claras e quebra a simetria do giro)
     nt.nodes.clear()
     bgn, out = nt.nodes.new("ShaderNodeBackground"), nt.nodes.new("ShaderNodeOutputWorld")
-    bgn.inputs["Color"].default_value, bgn.inputs["Strength"].default_value = (*bg, 1), 0.6 * LUZ[0]
+    bgn.inputs["Color"].default_value, bgn.inputs["Strength"].default_value = (*bg, 1), 1.6 * LUZ[0]
     nt.links.new(bgn.outputs[0], out.inputs["Surface"])
     pts = [o.matrix_world @ Vector(c) for o in HERO if o.type == "MESH" for c in o.bound_box]
     return (Vector((min(p[i] for p in pts) for i in range(3))) + Vector((max(p[i] for p in pts) for i in range(3)))) / 2
@@ -860,7 +894,7 @@ if engine == "CYCLES":
     scene.cycles.time_limit = cfg.get("time_limit", 0)
 else:
     scene.eevee.taa_render_samples = cfg["samples_eevee"]
-    scene.eevee.use_gtao, scene.eevee.gtao_distance = True, size * 0.15  # oclusão ambiente: escurece o canto onde a peça encosta no apoio (sombra de contato)
+    scene.eevee.use_gtao, scene.eevee.gtao_distance = True, size * 0.4  # oclusão ambiente: escurece o canto onde a peça encosta no apoio (sombra de contato)
 scene.render.resolution_x, scene.render.resolution_y = cfg.get("res") or (cfg["size"], cfg["size"])  # "res" = [largura, altura] dos quadros do vídeo
 scene.render.image_settings.file_format = "JPEG"
 scene.render.image_settings.quality = 92
@@ -872,7 +906,7 @@ if MODO_GIRO:  # volta completa: o diâmetro do círculo que a peça ocupa no gi
     CIRCULO = math.hypot(_hi.x - _lo.x, _hi.y - _lo.y)
     PIVO = Vector(((_lo.x + _hi.x) / 2, (_lo.y + _hi.y) / 2, _lo.z))
     BASE_PECA = obj_ctx.matrix_world.copy()
-    FRAME_H = max((_hi.z - _lo.z) / 0.66, CIRCULO / (0.62 * ASPECTO))  # altura do quadro: a peça ocupa 66 % da altura, ou o círculo dela 62 % da largura (o que for maior)
+    FRAME_H = max((_hi.z - _lo.z) / 0.66, CIRCULO / (0.80 * ASPECTO))  # altura do quadro: a peça ocupa 66 % da altura, ou o círculo dela 62 % da largura (o que for maior)
 
 bpy.ops.object.camera_add()
 cam = bpy.context.object

@@ -192,7 +192,7 @@ def test_api_da_sala_virtual(tmp_path, monkeypatch):
             except urllib.error.HTTPError as e:
                 return json.load(e) | {"http": e.code}
         d = json.load(urllib.request.urlopen(b + "/api/cena?id=1", timeout=10))
-        assert d["cena"]["ambiente"] == "sala" and "quarto" in d["ambientes"] and d["previa"] is False and d["modelo_enviado"] is None
+        assert d["cena"]["ambiente"] == "escritorio" and "quarto" in d["ambientes"] and d["previa"] is False and d["modelo_enviado"] is None
         r = post("/api/cena/previa", dict(id=1, cena=dict(ambiente="cozinha", colocacao="prateleira")))
         assert r["ok"] and r["url"].startswith("/products/1/cena/previa.jpg") and vistos[-1] == ("m.stl", "cozinha", "prateleira", True)
         assert urllib.request.urlopen(b + "/products/1/cena/previa.jpg", timeout=10).read().startswith(b"\xff\xd8")

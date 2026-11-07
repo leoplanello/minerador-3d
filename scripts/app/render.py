@@ -137,7 +137,8 @@ def scene_for(cfg, title=""):
     return "parede" if "parede" in t or "wall" in t or (any(w in t for w in WALL_WORDS) and "mesa" not in t and "bancada" not in t) else "mesa"
 
 
-CENA_DEFAULT = dict(ambiente="sala", colocacao="mesa", escala_pct=100, giro=0, referencia="nenhuma", camera="3/4", luz="dia", modelo="produto", limite_s=600)
+# padrão: mesa de escritório (a sala com armário deixa a peça de lado e com sombra ruim)
+CENA_DEFAULT = dict(ambiente="escritorio", colocacao="mesa", escala_pct=100, giro=0, referencia="nenhuma", camera="3/4", luz="dia", modelo="produto", limite_s=600)
 CENA_CHOICES = dict(ambiente=("estudio",) + tuple(polyhaven.ROOMS) + tuple(salas.SALAS), colocacao=("chao", "mesa", "parede", "prateleira"), referencia=("nenhuma", "moeda", "caneca", "celular"),
                     camera=("3/4", "frontal", "close", "orbital"), luz=("dia", "tarde", "noite"), modelo=("produto", "enviado"))
 CENA_VIEW = {"3/4": "cena", "frontal": "cena_frontal", "close": "cena_close", "orbital": "cena"}  # a câmera orbital só se move no vídeo; na imagem vale o 3/4
