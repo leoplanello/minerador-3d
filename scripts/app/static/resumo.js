@@ -68,6 +68,7 @@ function drawResumo() {
 
 // ---- simulação: os controles são desenhados uma vez; só o resultado é refeito
 function drawSimControls() {
+  if (!RESUMO.data) return;  // ainda carregando: a tela é redesenhada quando os dados chegam
   const prods = RESUMO.data.products.filter(p => p.slice);
   if (!prods.length) { $('rsim').innerHTML = '<div class="empty"><b>Nada para simular ainda</b>Fatie ao menos um produto aprovado e a simulação aparece aqui.</div>'; RESUMO.simInit = false; return; }
   if (RESUMO.simInit === prods.map(p => p.id).join()) return;

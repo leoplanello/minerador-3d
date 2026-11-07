@@ -160,6 +160,7 @@ th { border-top:0 } .th { height:auto; padding:0; background:none; color:var(--m
 @media (max-width:760px) { .preview { grid-template-columns:1fr } }
 .pcampo { display:flex; gap:12px; align-items:flex-start; padding:8px 0; border-top:1px solid var(--line) }
 .pcampo .pv { white-space:pre-wrap; overflow-wrap:anywhere; font-size:14px }
+.pcampo .lim-ok { color:var(--green) } .pcampo .lim-err { color:var(--red) }
 code { background:var(--bg); padding:1px 5px; border-radius:4px; overflow-wrap:anywhere }
 
 /* alça de arrastar */
