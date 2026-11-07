@@ -17,6 +17,8 @@ model, outdir, cfgfile, engine = sys.argv[sys.argv.index("--") + 1:][:4]
 cfg = json.load(open(cfgfile, encoding="utf-8"))
 color = cfg["color"]
 ctx_kind = cfg["contexto"]  # "parede" ou "mesa" (render.py já resolveu o "auto")
+ESTUDIO = bool((cfg.get("sala") or {}).get("estudio"))  # sala virtual "Estúdio": fundo em tigela, sem móveis
+MODO_GIRO = cfg.get("modo_giro", "")  # volta completa do vídeo: "camera" (estúdio) ou "peca" (sala, a peça gira); "" = sem volta
 
 bpy.ops.wm.read_factory_settings(use_empty=True)
 bpy.ops.wm.stl_import(filepath=model)
@@ -690,11 +692,74 @@ def room_scene():
     return (Vector((min(p[i] for p in pts) for i in range(3))) + Vector((max(p[i] for p in pts) for i in range(3)))) / 2
 
 
+def tigela(size, cor):
+    """Fundo de estúdio: um piso que sobe em curva suave até a parede (sem quina nem linha de horizonte), em volta da peça. Medidas proporcionais ao tamanho dela."""
+    r1, rc, top = 6 * size, 3 * size, 12 * size
+    arco = [(r1 + rc * math.sin(math.radians(f)), rc - rc * math.cos(math.radians(f))) for f in range(0, 91, 10)]  # quarto de círculo: do piso até a parede
+    perfil = [(0.0, 0.0)] + arco + [(r1 + rc, top)]
+    N = 96
+    verts = [(r * math.cos(2 * math.pi * i / N), r * math.sin(2 * math.pi * i / N), z) for r, z in perfil for i in range(N)]
+    faces = [(j * N + i, j * N + (i + 1) % N, (j + 1) * N + (i + 1) % N, (j + 1) * N + i) for j in range(len(perfil) - 1) for i in range(N)]
+    me = bpy.data.meshes.new("fundo-estudio")
+    me.from_pydata(verts, [], faces)
+    me.update()
+    ob = bpy.data.objects.new("fundo-estudio", me)
+    bpy.context.collection.objects.link(ob)
+    ob.data.materials.append(make_mat("fundo-estudio", 0.95, Base_Color=(*cor, 1))[0])
+    return ob
+
+
+def estudio_scene():
+    """Estúdio: a peça no centro de uma tigela de fundo liso, com as duas luzes de área do estúdio e um HDRI de estúdio só para luz e reflexo.
+    A peça fica apoiada em z = 0. Devolve o ponto que a câmera mira."""
+    global HERO
+    C = cfg["cena"]
+    k = C["escala_pct"] / 100
+    pla(obj_ctx)
+    obj_ctx.scale = (k, k, k)
+    obj_ctx.rotation_mode = "XYZ"
+    obj_ctx.rotation_euler = (0, 0, math.radians(C["giro"]))
+    obj_ctx.location = (0, 0, 0)
+    bpy.context.view_layer.update()
+    lo_, hi_ = bounds(obj_ctx)
+    obj_ctx.location = Vector((-(lo_.x + hi_.x) / 2, -(lo_.y + hi_.y) / 2, -lo_.z))
+    bpy.context.view_layer.update()
+    lo_, hi_ = bounds(obj_ctx)
+    size_ = max(hi_ - lo_)
+    for o in list(studio):  # as luzes do estúdio geral saem (com a câmera dando a volta, a luz precisa ser igual de todos os lados)
+        if o.type == "LIGHT":
+            studio.remove(o)
+            bpy.data.objects.remove(o, do_unlink=True)
+    for loc in [(0, 0, size_ * 4)] + [(size_ * 3.5 * math.cos(math.radians(a)), size_ * 3.5 * math.sin(math.radians(a)), size_ * 1.5) for a in range(0, 360, 60)]:
+        bpy.ops.object.light_add(type="AREA", location=loc)  # uma luz grande em cima (o piso e a peça) e seis suaves em anel (a parede curva): simétricas, o fundo tem o mesmo brilho em todo o giro
+        lt = bpy.context.object
+        top = loc[2] > size_ * 3
+        lt.name, lt.data.energy, lt.data.size = "Luz de estúdio", (70 if top else 12) * size_ ** 2, size_ * (4 if top else 2)
+        aim(lt, Vector((0, 0, size_ / 2)))
+        ctx.append(lt)
+    ctx.append(tigela(size_, bg))
+    refs = reference_object(C["referencia"], hi_.x + 40, 0, 0)
+    for o in refs:
+        o["m3d_tipo"] = "referencia"
+    obj_ctx.name, obj_ctx["m3d_tipo"], obj_ctx["m3d_fonte"] = "peca", "peca", "produto"
+    ctx.extend(refs)
+    HERO = [obj_ctx] + refs
+    nt = world_ctx.node_tree  # mundo liso na cor do fundo: luz uniforme em volta (um HDRI aparece como manchas claras e quebra a simetria do giro)
+    nt.nodes.clear()
+    bgn, out = nt.nodes.new("ShaderNodeBackground"), nt.nodes.new("ShaderNodeOutputWorld")
+    bgn.inputs["Color"].default_value, bgn.inputs["Strength"].default_value = (*bg, 1), 0.6 * LUZ[0]
+    nt.links.new(bgn.outputs[0], out.inputs["Surface"])
+    pts = [o.matrix_world @ Vector(c) for o in HERO if o.type == "MESH" for c in o.bound_box]
+    return (Vector((min(p[i] for p in pts) for i in range(3))) + Vector((max(p[i] for p in pts) for i in range(3)))) / 2
+
+
 HERO = []
 wall_m, wall_b = make_mat("parede", 0.95)
 procedural(wall_m, wall_b, 400, [(0.55, 0.50, 0.44), (0.64, 0.59, 0.52)], kind="NOISE", bump=0.05)
 IMP = (cfg.get("sala") or {}).get("importada") if PH else None
-if PH:
+if ESTUDIO:
+    target = estudio_scene()
+elif PH:
     target = imported_scene() if IMP else room_scene()
 elif ctx_kind == "parede":
     # a face de trás encosta na parede (y = 0); o maior lado restante fica na vertical
@@ -721,7 +786,9 @@ else:
     target = center
 
 # luz: na sala, uma janela de área suave e quente (do lado esquerdo da câmera) mais um preenchimento fraco; no cenário simples, sol com caixilho de sombra
-if IMP:  # sala importada: luz de área suave do lado da câmera (o interior é fechado e a câmera fica dentro dele) mais o ambiente do mundo
+if ESTUDIO:  # as duas luzes de área do estúdio já estão na cena (estudio_scene)
+    pass
+elif IMP:  # sala importada: luz de área suave do lado da câmera (o interior é fechado e a câmera fica dentro dele) mais o ambiente do mundo
     k = {"soft": 0.6, "normal": 1.0, "strong": 1.5}[cfg["light"]] * LUZ[3]
     for loc, size_xy, watts, col in (((-900, -1500, 1500), (1500, 1500), 9000 * k, LUZ[1]), ((900, -1100, 1900), (1800, 1800), 3000 * k, (0.9, 0.93, 1.0))):
         bpy.ops.object.light_add(type="AREA", location=target + Vector(loc))
@@ -774,7 +841,7 @@ else:
         b.visible_camera = False  # só projeta sombra, a câmera não vê a "janela"
         ctx.append(b)
 
-if PH:
+if PH or ESTUDIO:
     def span_of(objs):
         pts = [o.matrix_world @ Vector(c) for o in objs if o.type == "MESH" for c in o.bound_box]
         return max(max(p[k] for p in pts) - min(p[k] for p in pts) for k in range(3))
@@ -793,10 +860,19 @@ if engine == "CYCLES":
     scene.cycles.time_limit = cfg.get("time_limit", 0)
 else:
     scene.eevee.taa_render_samples = cfg["samples_eevee"]
+    scene.eevee.use_gtao, scene.eevee.gtao_distance = True, size * 0.15  # oclusão ambiente: escurece o canto onde a peça encosta no apoio (sombra de contato)
 scene.render.resolution_x, scene.render.resolution_y = cfg.get("res") or (cfg["size"], cfg["size"])  # "res" = [largura, altura] dos quadros do vídeo
 scene.render.image_settings.file_format = "JPEG"
 scene.render.image_settings.quality = 92
 scene.view_settings.view_transform = "Standard"
+
+ASPECTO = scene.render.resolution_x / scene.render.resolution_y
+if MODO_GIRO:  # volta completa: o diâmetro do círculo que a peça ocupa no giro enquadra a largura; a peça gira em volta do próprio eixo, pivô no centro do chão dela
+    _lo, _hi = bounds(obj_ctx)
+    CIRCULO = math.hypot(_hi.x - _lo.x, _hi.y - _lo.y)
+    PIVO = Vector(((_lo.x + _hi.x) / 2, (_lo.y + _hi.y) / 2, _lo.z))
+    BASE_PECA = obj_ctx.matrix_world.copy()
+    FRAME_H = max((_hi.z - _lo.z) / 0.66, CIRCULO / (0.62 * ASPECTO))  # altura do quadro: a peça ocupa 66 % da altura, ou o círculo dela 62 % da largura (o que for maior)
 
 bpy.ops.object.camera_add()
 cam = bpy.context.object
@@ -812,7 +888,7 @@ for i, (name, az, el, zoom, *rest) in enumerate(cfg["views"], 1):
     for o in ctx:
         o.hide_render = not in_use
     scene.world = world_ctx if in_use else world_studio
-    scene.view_settings.view_transform = "AgX" if in_use and PH else "Standard"  # o estúdio fica em Standard (fundo branco puro); a sala em AgX, com mais gama nas luzes
+    scene.view_settings.view_transform = "AgX" if in_use and (PH or ESTUDIO) else "Standard"  # o estúdio fica em Standard (fundo branco puro); a sala e o estúdio em volta em AgX, com mais gama nas luzes
     if in_use and cfg.get("still_cycles", True) and engine != "CYCLES":  # as fotos "em uso" saem em Cycles com denoiser; o estúdio é rápido no EEVEE
         scene.render.engine = "CYCLES"
         scene.cycles.samples = cfg["samples_cycles"]
@@ -822,9 +898,15 @@ for i, (name, az, el, zoom, *rest) in enumerate(cfg["views"], 1):
         scene.cycles.denoiser = "OPENIMAGEDENOISE"
     elif engine != "CYCLES":
         scene.render.engine = "BLENDER_EEVEE_NEXT"
-    focus = (FOCUS if (cfg.get("montagem") == "sobre_movel" or cfg.get("cena")) else target) if (in_use and PH) else target if in_use else center
+    focus = (FOCUS if (cfg.get("montagem") == "sobre_movel" or cfg.get("cena")) else target) if (in_use and (PH or ESTUDIO)) else target if in_use else center
+    if MODO_GIRO == "peca" and in_use and t is not None:  # a peça gira no lugar (a câmera e a luz ficam como estão)
+        obj_ctx.matrix_world = Matrix.Translation(PIVO) @ Matrix.Rotation(math.radians(t), 4, "Z") @ Matrix.Translation(-PIVO) @ BASE_PECA
     a, e = math.radians(az + (-90 if in_use else cfg["turn"])), math.radians(el)
-    if PH and in_use:
+    giro_volta = bool(MODO_GIRO) and in_use and name == "cena_orbital"  # volta completa: enquadramento parado, sem regra dos terços
+    if giro_volta:
+        cam.data.lens, cam.data.dof.aperture_fstop = 50, 5.6 if ESTUDIO else 2.8
+        dist = FRAME_H * 50 / (36 if ASPECTO < 1 else 36 / ASPECTO)  # lente 50 e sensor de 36 mm no lado maior: a peça cabe inteira em qualquer ponto do giro
+    elif (PH or ESTUDIO) and in_use:
         # a peça ocupa uma fração da altura do quadro (perto 40 %, uso 30 %, médio 20 %, aberto 8 %); a distância sai da lente: d = tamanho * lente / (sensor * fração)
         frac, fst, lens = {"uso": (0.30, 2.5, 50), "uso_perto": (0.40, 1.8, 50), "uso_medio": (0.20, 3.2, 50), "uso_aberto": (0.08, 5.0, 28),
                            "cena": (0.35, 2.8, 50), "cena_frontal": (0.35, 2.8, 50), "cena_close": (0.70, 2.0, 60), "cena_orbital": (0.32, 2.8, 50)}[name]
@@ -843,7 +925,7 @@ for i, (name, az, el, zoom, *rest) in enumerate(cfg["views"], 1):
         cam.data.lens, cam.data.dof.aperture_fstop = 50, 2.8
     cam.location = focus + Vector((dist * math.cos(e) * math.cos(a), dist * math.cos(e) * math.sin(a), dist * math.sin(e)))
     aim(cam, focus)
-    if PH and in_use:  # regra dos terços: a peça fica no terço esquerdo e um pouco abaixo do centro
+    if (PH or ESTUDIO) and in_use and not giro_volta:  # regra dos terços: a peça fica no terço esquerdo e um pouco abaixo do centro
         right = cam.matrix_world.to_quaternion() @ Vector((1, 0, 0))
         up_ = cam.matrix_world.to_quaternion() @ Vector((0, 1, 0))
         frame_h = dist * 36 / cam.data.lens

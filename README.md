@@ -26,6 +26,30 @@ Na primeira abertura, um assistente leva você pelos passos: baixar as ferrament
 - Mercado Livre: crie o app em developers.mercadolivre.com.br e salve o App ID e a Secret Key em Configurações.
 - Vídeo: grave a voz do roteiro e envie o áudio (sem áudio o vídeo sai mudo, só com legenda).
 
+## Sala virtual: estúdio e vídeo em 360°
+
+Na sala virtual (cartão "Sala virtual") há dois ambientes principais e um vídeo de volta completa:
+
+- **Estúdio**: fundo liso em tigela (sem quina de horizonte), luz de cima mais seis laterais em anel (a parede curva fica com o mesmo brilho em todo o giro), sombra de contato, oclusão ambiente e profundidade de campo leve. A câmera dá a volta completa de 360° em torno da peça.
+- **Sala com a peça em mesa ou chão**: a câmera fica parada e a peça gira 360° sobre a própria base (a parede ocupa o outro lado da câmera, então a câmera não pode dar a volta).
+- **Sala com a peça na parede ou prateleira**: continua o arco de meia volta de antes (uma volta completa atravessaria a parede).
+
+O vídeo padrão tem 8 s e 24 quadros/s e fecha em loop: o último quadro encosta no primeiro sem tranco (a diferença entre eles é igual à de dois quadros seguidos). O padrão renderiza em 720×1280 e o ffmpeg amplia para 1080×1920; a opção "Alta qualidade" renderiza direto em 1080×1920 com mais amostras.
+
+**Tempos medidos** (i5-1135G7, sem GPU NVIDIA, EEVEE; Blender 4.2.3 LTS; 192 quadros = 8 s; cada execução inclui cerca de 15 s de abertura do Blender):
+
+| Vídeo | Resolução de render | Tempo total | Por quadro |
+|---|---|---|---|
+| Estúdio, padrão | 720×1280 | 311 s (~5 min) | 1,6 s |
+| Sala com peça girando, padrão | 720×1280 | 281 s (~5 min) | 1,5 s |
+| Estúdio, padrão (medido antes, com outros testes rodando ao mesmo tempo) | 1080×1920 | 600 s | 3,1 s |
+| Sala com peça girando, padrão (idem) | 1080×1920 | 577 s | 3,0 s |
+| Estúdio, alta qualidade | 1080×1920 | 1161 s (~19 min) | 6,1 s |
+
+Cycles não foi medido (no i5-1135G7 só CPU, é muito mais lento); fica como opção e a tela avisa.
+
+Não há imagem final em Cycles medida aqui. A pré-visualização (EEVEE 640 px) leva cerca de 11 s.
+
 ## Desenvolvimento
 
 ```bash

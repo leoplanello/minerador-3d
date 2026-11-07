@@ -2,6 +2,7 @@
 // e gera imagem e vídeo. Pré-visualização rápida em EEVEE antes do render final em Cycles.
 const SALA = {
   id: null, data: null, busy: false,
+  SPF: {rapido: 1.6, alta: 6, cycles: 55},  // segundos por quadro medidos nesta máquina (i5-1135G7, sem GPU NVIDIA): padrão em 720×1280, alta em 1080×1920; Cycles é estimativa não medida (ver README)
   L: {ambiente: 'Ambiente', colocacao: 'Onde a peça fica', referencia: 'Objeto de referência (para ver a escala)', camera: 'Câmera', luz: 'Luz'},
   V: {colocacao: {chao: 'No chão', mesa: 'Sobre a mesa ou móvel', parede: 'Na parede', prateleira: 'Numa prateleira'}, referencia: {nenhuma: 'Nenhum', moeda: 'Moeda (27 mm)', caneca: 'Caneca (8 × 9,5 cm)', celular: 'Celular (15 cm)'},
       camera: {'3/4': 'Três quartos', frontal: 'Frontal', close: 'Close', orbital: 'Orbital (só no vídeo)'}, luz: {dia: 'Dia', tarde: 'Tarde', noite: 'Noite'}},
@@ -35,16 +36,17 @@ const SALA = {
         <div id="slimpbox" class="small"></div>
         <div id="slblend" class="small" style="border-top:1px solid var(--line);padding-top:10px"></div>
         <div class="row"><button id="slprev" class="pri sm">Pré-visualizar (rápido)</button><button id="slfinal" class="sm">Gerar imagem final</button>
-          <label class="small">Vídeo (s)<input id="slseg" type="number" min="3" max="20" value="6" style="width:64px"></label>
-          <label class="chk small"><input type="checkbox" id="slcyc"> Cycles</label><button id="slvid" class="sm">Gerar vídeo orbital</button></div>
+          <label class="small">Vídeo (s)<input id="slseg" type="number" min="3" max="20" value="8" style="width:64px"></label>
+          <label class="chk small"><input type="checkbox" id="slalta"> Alta qualidade (mais lento)</label>
+          <label class="chk small"><input type="checkbox" id="slcyc"> Cycles (muito lento)</label><button id="slvid" class="sm">Gerar vídeo em 360°</button></div>
         <p id="slest" class="small mut" style="margin:0"></p><p id="slmsg" class="small" style="margin:0"></p>
         <div class="row" style="align-items:flex-start"><img id="slimg" alt="Pré-visualização" style="max-width:360px;width:100%;border-radius:8px;${d.previa ? '' : 'display:none'}" src="${d.previa ? `/products/${c.id}/cena/previa.jpg?t=${Date.now()}` : ''}">
-          <video id="slvideo" controls style="max-width:200px;${d.video ? '' : 'display:none'}" ${d.video ? `src="/products/${c.id}/cena/video.mp4?t=${Date.now()}"` : ''}></video></div>
+          <video id="slvideo" controls loop style="max-width:200px;${d.video ? '' : 'display:none'}" ${d.video ? `src="/products/${c.id}/cena/video.mp4?t=${Date.now()}"` : ''}></video></div>
         <p class="small mut" style="margin:6px 0 0">Salas importadas (CGTrader, modelos gratuitos): ${(d.importadas || []).map(m => `“${esc(m.titulo)}” por ${esc(m.autor)} (<a href="${esc(m.pagina)}" target="_blank" rel="noopener">CGTrader</a>)`).join('; ')}. ${esc(d.creditos || '')} Móveis das salas padrão: Poly Haven, CC0.</p></div>`;
     const upd = () => { $('sl_escv').textContent = $('sl_escala').value + '%'; $('sl_girov').textContent = $('sl_giro').value + '°';
-      const s = +$('slseg').value || 6, cy = $('slcyc').checked;
-      $('slest').textContent = cy ? `Vídeo em Cycles: ${s * 24} quadros, cerca de ${Math.round(s * 24 * 55 / 60)} min nesta máquina (pesado). A pré-visualização e a imagem final são mais rápidas.`
-        : `Vídeo em EEVEE: ${s * 24} quadros, cerca de ${Math.max(1, Math.round(s * 24 * 2.5 / 60))} min.`; };
+      const s = +$('slseg').value || 8, cy = $('slcyc').checked, alta = $('slalta').checked;
+      const spf = cy ? SALA.SPF.cycles : alta ? SALA.SPF.alta : SALA.SPF.rapido, min = Math.max(1, Math.round(s * 24 * spf / 60));
+      $('slest').textContent = `Vídeo de ${s} s (${s * 24} quadros): cerca de ${min} min nesta máquina${cy ? ' em Cycles' : alta ? ' em EEVEE, alta qualidade (1080 × 1920)' : ' em EEVEE (720 × 1280, ampliado para 1080 × 1920)'}. A volta é de 360° e fecha em loop.`; };
     $('salacard').oninput = upd; upd();
     $('slfile').onchange = async e => { const f = e.target.files[0]; if (!f) return;
       const r = await (await fetch(`/api/cena/modelo?id=${c.id}&name=${encodeURIComponent(f.name)}`, {method: 'POST', body: f})).json();
@@ -55,7 +57,7 @@ const SALA = {
       $('slmsg').textContent = okMsg; return r; };
     $('slprev').onclick = async () => { const r = await run($('slprev'), '/api/cena/previa', {}, 'Pré-visualização pronta.'); if (r) { const im = $('slimg'); im.style.display = ''; im.src = r.url; } };
     $('slfinal').onclick = async () => { const r = await run($('slfinal'), '/api/cena/render', {}, 'Renderizando a imagem final em Cycles (alguns minutos)…'); if (r) this.poll(c); };
-    $('slvid').onclick = async () => { const r = await run($('slvid'), '/api/cena/video', {segundos: +$('slseg').value || 6, motor: $('slcyc').checked ? 'cycles' : 'eevee'}, 'Renderizando os quadros do vídeo…'); if (r) this.poll(c); };
+    $('slvid').onclick = async () => { const r = await run($('slvid'), '/api/cena/video', {segundos: +$('slseg').value || 8, motor: $('slcyc').checked ? 'cycles' : 'eevee', qualidade: $('slalta').checked ? 'alta' : 'padrao'}, 'Renderizando os quadros do vídeo…'); if (r) this.poll(c); };
     $('sl_ambiente').addEventListener('change', () => this.imp(c));
     this.imp(c);
     this.blend(c);

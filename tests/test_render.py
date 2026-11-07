@@ -162,3 +162,61 @@ def test_sala_virtual_previa_real_em_cada_colocacao(tmp_path, colocacao):
     assert im.size == (640, 640)
     px = [im.getpixel((x, y)) for x in range(0, 640, 64) for y in range(0, 640, 64)]
     assert min(max(p) for p in px) < 250 and max(max(p) for p in px) > 40  # é uma cena com cor e luz, não fundo branco nem preto
+
+
+def test_volta_completa_fecha_o_loop_com_passo_constante():
+    ang = render.giro_path(8)
+    passo = ang[1] - ang[0]
+    assert ang[0] == 0 and abs(ang[-1] - (360 - passo)) < 1e-9  # o último quadro fica um passo antes do 360: o próximo é o primeiro
+    assert all(abs((b - a) - passo) < 1e-9 for a, b in zip(ang, ang[1:]))  # velocidade constante: sem começo nem fim lento
+
+
+def test_modo_do_giro_por_ambiente_e_colocacao():
+    assert render.giro_modo(dict(ambiente="estudio")) == "camera"
+    assert render.giro_modo(dict(ambiente="sala", colocacao="mesa")) == "peca"
+    assert render.giro_modo(dict(ambiente="quarto", colocacao="chao")) == "peca"
+    assert render.giro_modo(dict(ambiente="sala", colocacao="parede")) == ""  # peça na parede: sem volta completa (arco de meia volta)
+    assert render.clean_cena({"ambiente": "estudio"})["ambiente"] == "estudio"
+    assert render.cena_cfg(render.clean_cena({"ambiente": "estudio"}))["sala"] == dict(estudio=True)
+
+
+def test_quadros_do_video_pedem_o_giro_certo(monkeypatch, tmp_path):
+    import json
+    import types
+    seen = []
+
+    def fake(args, **kw):  # o Blender de mentira: lê a configuração e cria os quadros pedidos
+        cfg = json.loads(Path(args[-2]).read_text(encoding="utf-8"))
+        seen.append(cfg)
+        for i in range(1, len(cfg["views"]) + 1):
+            (Path(args[-3]) / f"render_{i}.jpg").write_bytes(b"x")
+        return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+    blender = tmp_path / "blender.exe"
+    blender.write_bytes(b"")
+    monkeypatch.setattr(render, "BLENDER", blender)
+    monkeypatch.setattr(render.proc, "run", fake)
+    stl = make3mf(tmp_path / "c.3mf")
+    render.render_frames(stl, tmp_path / "e", 8, cena=dict(ambiente="estudio"))
+    render.render_frames(stl, tmp_path / "m", 8, cena=dict(ambiente="sala", colocacao="mesa"))
+    render.render_frames(stl, tmp_path / "p", 8, cena=dict(ambiente="sala", colocacao="parede"))
+    estudio, mesa, parede = seen
+    assert estudio["modo_giro"] == "camera" and [v[1] for v in estudio["views"]] == render.giro_path(8)  # a câmera dá a volta
+    assert mesa["modo_giro"] == "peca" and [v[4] for v in mesa["views"]] == render.giro_path(8)  # a câmera fica, a peça gira no t
+    assert parede["modo_giro"] == "" and [v[1] for v in parede["views"]][0] == -70  # parede: arco de meia volta, como antes
+    assert len(estudio["views"]) == 8 and all(v[0] == "cena_orbital" for v in estudio["views"] + mesa["views"])
+
+
+@pytest.mark.skipif(not render.BLENDER.exists(), reason="Blender portátil não instalado")
+def test_estudio_real_mantem_a_peca_inteira_em_todo_o_giro(tmp_path):
+    from PIL import Image, ImageChops
+    make3mf(tmp_path / "c.3mf")
+    frames = render.render_frames(tmp_path / "c.3mf", tmp_path / "out", 4, engine="EEVEE", res=(270, 480), title="Peça", cfg=dict(quality="rapido"),
+                                  cena=dict(ambiente="estudio", colocacao="chao"))
+    for f in frames:
+        im = Image.open(f).convert("RGB")
+        w, h = im.size
+        fundo = im.getpixel((w // 2, 4))  # o topo do quadro é o fundo liso
+        mascara = ImageChops.difference(im, Image.new("RGB", im.size, fundo)).convert("L").point(lambda v: 255 if v > 60 else 0)
+        caixa = mascara.getbbox()
+        assert caixa is not None, f"sem peça no quadro: {f.name}"
+        assert caixa[0] > 0.05 * w and caixa[2] < 0.95 * w and caixa[1] > 0.05 * h and caixa[3] < 0.95 * h, f"peça cortada: {f.name} {caixa}"

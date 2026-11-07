@@ -1167,7 +1167,7 @@ def cena_previa(lid, cena):
     """Pré-visualização rápida (EEVEE, 640 px). Devolve o caminho do JPG."""
     c = renderizar.clean_cena(cena)
     blend = sala.blend_path(cena_dir(lid))
-    if blend.is_file():  # sala editada no Blender: vale o arquivo (câmera e luz dele), não os controles
+    if blend.is_file() and c["ambiente"] != "estudio":  # sala editada no Blender: vale o arquivo (câmera e luz dele), não os controles
         with render_lock:
             f = renderizar.render_blend(blend, cena_dir(lid) / "previa", renderizar.CENA_VIEW[c["camera"]], preview=True)
         out = cena_dir(lid) / "previa.jpg"
@@ -1186,13 +1186,13 @@ def cena_previa(lid, cena):
     return out
 
 
-def run_cena(lid, cena, kind, seconds=6, fps=24, engine="EEVEE"):
-    """Imagem final (Cycles, 1200 px) que vai para a galeria do produto como cena_N.jpg, ou vídeo com a câmera orbital em cena/video.mp4."""
+def run_cena(lid, cena, kind, seconds=8, fps=24, engine="EEVEE", qualidade="rapido"):
+    """Imagem final (Cycles, 1200 px) que vai para a galeria do produto como cena_N.jpg, ou vídeo com a volta completa em cena/video.mp4."""
     job = CENA_JOBS[lid] = dict(status="running", kind=kind, msg="Renderizando…")
     try:
         c = renderizar.clean_cena(cena)
         blend = sala.blend_path(cena_dir(lid))
-        usa_blend = blend.is_file()
+        usa_blend = blend.is_file() and c["ambiente"] != "estudio"
         model = None if usa_blend else cena_model(lid, c)
         put_setting(f"cena:{lid}", c)
         with render_lock:
@@ -1211,11 +1211,13 @@ def run_cena(lid, cena, kind, seconds=6, fps=24, engine="EEVEE"):
                 job.update(status="ok", msg=f"Imagem cena_{n}.jpg guardada nas imagens do produto.", file=f"cena_{n}.jpg")
             else:
                 W, H = videos.FORMATS[video_cfg()["format"]]
+                if qualidade != "normal":  # padrão: renderiza 2/3 do tamanho (720×1280) para caber em minutos; o ffmpeg amplia no arquivo final
+                    W, H = W * 2 // 3 // 2 * 2, H * 2 // 3 // 2 * 2
                 n = max(2, round(seconds * fps))
                 if usa_blend:
                     frames = renderizar.render_blend_frames(blend, cena_dir(lid) / "quadros", n, engine=engine, res=(W, H))
                 else:
-                    frames = renderizar.render_frames(model, cena_dir(lid) / "quadros", n, engine=engine, res=(W, H), title=cena_titulo(lid), cfg=dict(render_cfg(), quality="rapido"), cena=c)
+                    frames = renderizar.render_frames(model, cena_dir(lid) / "quadros", n, engine=engine, res=(W, H), title=cena_titulo(lid), cfg=dict(render_cfg(), quality=qualidade), cena=c)
                 with db() as cn:
                     k = cn.execute("SELECT title, scripts FROM kits WHERE listing_id=?", (lid,)).fetchone()
                 script = (json.loads(k["scripts"] or "[]") or [k["title"]])[0] if k else cena_titulo(lid)
@@ -1544,7 +1546,7 @@ class H(BaseHTTPRequestHandler):
             lid = int(parse_qs(url.query).get("id", ["0"])[0])
             return self._json(dict(cena=get_setting(f"cena:{lid}") or renderizar.clean_cena({}), job=CENA_JOBS.get(lid), previa=(cena_dir(lid) / "previa.jpg").is_file(), video=(cena_dir(lid) / "video.mp4").is_file(),
                                    modelo_enviado=next((f.name for f in sorted(cena_dir(lid).glob("modelo.*"))), None), opcoes={k: list(v) for k, v in renderizar.CENA_CHOICES.items()},
-                                   ambientes={k: v["label"] for k, v in polyhaven.ROOMS.items()} | {m["id"]: m["label"] for m in salas.lista()},
+                                   ambientes={"estudio": "Estúdio (fundo liso, mesa curva)"} | {k: v["label"] for k, v in polyhaven.ROOMS.items()} | {m["id"]: m["label"] for m in salas.lista()},
                                    importadas=salas.lista(SALA_DL), creditos=salas.FRASE, sala=sala.estado(lid, cena_dir(lid))))
         if path == "/api/salas":
             return self._json(dict(salas=salas.lista(SALA_DL), aviso=salas.FRASE))
@@ -1848,9 +1850,10 @@ class H(BaseHTTPRequestHandler):
                     cena_previa(lid, cena)
                     return self._json(dict(ok=True, url=f"/products/{lid}/cena/previa.jpg?t={int(time.time())}"))
                 kind = "imagem" if path.endswith("render") else "video"
-                seg = min(max(int(data.get("segundos", 6)), 3), 20)
+                seg = min(max(int(data.get("segundos", 8)), 3), 20)
                 engine = "CYCLES" if data.get("motor") == "cycles" else "EEVEE"
-                threading.Thread(target=run_cena, args=(lid, cena, kind, seg, 24, engine), daemon=True).start()
+                qual = "normal" if data.get("qualidade") == "alta" else "rapido"
+                threading.Thread(target=run_cena, args=(lid, cena, kind, seg, 24, engine, qual), daemon=True).start()
             except (ValueError, TypeError, KeyError) as e:
                 return self._json(dict(error=str(e)), 400)
             return self._json(dict(ok=True))
