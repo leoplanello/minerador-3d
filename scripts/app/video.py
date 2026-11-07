@@ -273,9 +273,11 @@ def _filtro_imagem(cfg, legs, tmp):
             partes.append(f"[{atual}]drawbox=x=0:y=ih*{y:.3f}:w=iw:h=ih*{h:.3f}:color=0x{cfg['cobrir_cor'][1:]}:t=fill[c]")
         atual = "c"
     txt = []
-    max_h = H * (0.2 if cfg["formato"] == "9:16" else 0.13)
+    max_h = H * (cfg["cobrir_h"] if cfg["cobrir"] else (0.2 if cfg["formato"] == "9:16" else 0.13))  # com a faixa, a legenda cabe nela
     ty = {"bottom": "h*0.755" if cfg["formato"] == "9:16" else "h*0.84", "center": "(h-text_h)/2", "top": "h*0.06"}[cfg["legenda_pos"]]
-    box = ":box=1:boxcolor=black@0.5:boxborderw=22" if cfg["legenda_caixa"] else ""
+    if cfg["cobrir"] and cfg["legenda_pos"] == "bottom":  # centro da faixa: a legenda nova não cai na borda dela
+        ty = f"{H * (cfg['cobrir_y'] + cfg['cobrir_h'] / 2):.0f}-text_h/2"
+    box = ":box=1:boxcolor=black@0.5:boxborderw=22" if cfg["legenda_caixa"] and not cfg["cobrir"] else ""  # com a faixa, a caixa seria uma faixa a mais
     for i, (a, b, texto) in enumerate(legs):
         f = Path(tmp) / f"l{i}.txt"
         cap, fs = fit_caption(texto, W, max_h, round(cfg["legenda_tamanho"] * W / 1080))
