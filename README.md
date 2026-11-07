@@ -40,8 +40,10 @@ O vídeo padrão tem 8 s e 24 quadros/s e fecha em loop: o último quadro encost
 
 | Vídeo | Resolução de render | Tempo total | Por quadro |
 |---|---|---|---|
-| Estúdio, padrão | 720×1280 | 311 s (~5 min) | 1,6 s |
-| Sala com peça girando, padrão | 720×1280 | 281 s (~5 min) | 1,5 s |
+| Estúdio, padrão (medido em 07/11, versão com sombra de contato e peça maior) | 720×1280 | 538 s (~9 min) | 2,8 s |
+| Estúdio, padrão (medido antes das correções de luz e sombra) | 720×1280 | 311 s (~5 min) | 1,6 s |
+| Sala com peça girando, padrão (mesa de escritório, medido em 07/11) | 720×1280 | 431 s (~7 min) | 2,2 s |
+| Sala com peça girando, padrão (sala com armário, medido antes) | 720×1280 | 281 s (~5 min) | 1,5 s |
 | Estúdio, padrão (medido antes, com outros testes rodando ao mesmo tempo) | 1080×1920 | 600 s | 3,1 s |
 | Sala com peça girando, padrão (idem) | 1080×1920 | 577 s | 3,0 s |
 | Estúdio, alta qualidade | 1080×1920 | 1161 s (~19 min) | 6,1 s |
