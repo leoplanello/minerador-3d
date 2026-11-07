@@ -228,14 +228,14 @@ const VIEWS = {
         </div></div>
       <div class="card" id="icard" hidden><div class="card-h"><h2>Imagens do anúncio</h2><span id="ichip" class="chip"></span></div>
         <p id="istate" class="small mut" style="margin:0 0 12px"></p>
-        <details class="cfg" open><summary>Configurar as imagens</summary><div id="icfg" class="cfgform"></div></details>
+        <details class="cfg"><summary>Mais opções (cor, fundo, luz, vistas)</summary><div id="icfg" class="cfgform"></div></details>
         <div class="row" style="margin:12px 0"><button id="igo" class="pri">Gerar imagens</button>
           <label class="small mut">Ou envie uma foto sua <input id="ifoto" type="file" accept="image/*"></label><button id="ifup" class="sm">Enviar foto</button></div>
         <p class="small mut" style="margin:0 0 8px">Use as setas para mudar a ordem (a primeira é a foto principal) e Ocultar para tirar uma imagem do anúncio, do kit e do vídeo.</p>
         <div id="igal" class="gallery"></div></div>
       <div class="card" id="vcard" hidden><div class="card-h"><h2>Vídeo</h2><span id="vchip" class="chip"></span></div>
         <p id="vstate" class="small mut" style="margin:0 0 12px"></p>
-        <details class="cfg" open><summary>Configurar o vídeo</summary><div id="vcfg" class="cfgform"></div></details>
+        <details class="cfg"><summary>Mais opções (formato, legenda, música)</summary><div id="vcfg" class="cfgform"></div></details>
         <div class="row" style="margin:12px 0"><label class="small mut">Sua voz lendo o roteiro (opcional) <input id="vfile" type="file" accept=".wav,.mp3,.m4a,.ogg"></label><button id="vup" class="sm">Enviar áudio</button>
           <label class="small mut">Música de fundo (opcional) <input id="mfile2" type="file" accept=".wav,.mp3,.m4a,.ogg"></label><button id="mup2" class="sm">Enviar música</button>
           <span class="grow"></span><button id="vgo" class="pri">Gerar vídeo</button></div>
