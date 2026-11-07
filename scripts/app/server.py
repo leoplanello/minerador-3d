@@ -3,6 +3,7 @@ import json
 import os
 import html
 import io
+import math
 import re
 import sqlite3
 import zipfile
@@ -76,6 +77,8 @@ def init():
                 c.execute(f"ALTER TABLE stores ADD COLUMN {col} {ddl}")
         if "info" not in [r[1] for r in c.execute("PRAGMA table_info(models)")]:  # título, autor, imagem e números do modelo escolhido (JSON)
             c.execute("ALTER TABLE models ADD COLUMN info TEXT DEFAULT ''")
+        if "titulo_shopee" not in [r[1] for r in c.execute("PRAGMA table_info(kits)")]:  # título da Shopee (até 120), junto do texto do ML
+            c.execute("ALTER TABLE kits ADD COLUMN titulo_shopee TEXT DEFAULT ''")
         for col in ("started", "ts"):  # quando cada etapa começou e mudou de estado por último
             if col not in [r[1] for r in c.execute("PRAGMA table_info(steps)")]:
                 c.execute(f"ALTER TABLE steps ADD COLUMN {col} TEXT")
@@ -296,20 +299,65 @@ def set_business(data):
 
 
 def set_kit(lid, d):
-    """Valida e grava título, descrição, bullets, roteiros e palavras-chave (edição da pessoa ou resposta do Claude)."""
+    """Valida e grava títulos (ML e Shopee), descrição, bullets, roteiros e palavras-chave (edição da pessoa ou resposta do Claude).
+    Sem 'titulo_shopee' no pedido, o título da Shopee que já estava gravado fica."""
     title, desc = str(d.get("title", "")).strip(), str(d.get("description", "")).strip()
     lists = {k: [str(x).strip() for x in d.get(k, []) if str(x).strip()] for k in ("bullets", "scripts", "keywords")}
     if not 5 <= len(title) <= 60:
         raise ValueError("o título precisa ter de 5 a 60 caracteres")
     if len(desc) < 20 or len(desc) > 5000:
         raise ValueError("a descrição precisa ter de 20 a 5000 caracteres")
+    ts = str(d["titulo_shopee"]).strip() if "titulo_shopee" in d else None
+    if ts and not 5 <= len(ts) <= 120:
+        raise ValueError("o título da Shopee precisa ter de 5 a 120 caracteres")
     with lock, db() as c:
-        c.execute("INSERT INTO kits(listing_id,title,description,bullets,scripts,keywords) VALUES(?,?,?,?,?,?) ON CONFLICT(listing_id) DO UPDATE SET"
-                  " title=excluded.title, description=excluded.description, bullets=excluded.bullets, scripts=excluded.scripts,"
+        if ts is None:
+            row = c.execute("SELECT titulo_shopee FROM kits WHERE listing_id=?", (lid,)).fetchone()
+            ts = row["titulo_shopee"] if row else ""
+        c.execute("INSERT INTO kits(listing_id,title,titulo_shopee,description,bullets,scripts,keywords) VALUES(?,?,?,?,?,?,?) ON CONFLICT(listing_id) DO UPDATE SET"
+                  " title=excluded.title, titulo_shopee=excluded.titulo_shopee, description=excluded.description, bullets=excluded.bullets, scripts=excluded.scripts,"
                   " keywords=excluded.keywords, confirmed=0, ts=CURRENT_TIMESTAMP",
-                  (lid, title, desc, json.dumps(lists["bullets"]), json.dumps(lists["scripts"]), json.dumps(lists["keywords"])))
+                  (lid, title, ts, desc, json.dumps(lists["bullets"]), json.dumps(lists["scripts"]), json.dumps(lists["keywords"])))
         c.execute("UPDATE steps SET status='ok' WHERE listing_id=? AND name='copy'", (lid,))
         c.execute("UPDATE steps SET status='pending' WHERE listing_id=? AND name='kit'", (lid,))  # texto mudou: confirmar de novo
+
+
+MATERIAL = "PLA"  # perfil de impressão do app (Bambu Lab A1); o material do anúncio concorrente não serve
+
+
+def pecas_do_anuncio(lid):
+    """Quantas peças o anúncio vende de uma vez. O modelo baixado costuma ser 1 peça; padrão 1."""
+    return max(1, int(get_setting(f"pecas:{lid}", 1)))
+
+
+def dimensoes_produto(lid, model):
+    """Medida da amostra impressa e medida, se houver; senão a do modelo baixado. Em mm, ou None."""
+    am = get_setting(f"amostra:{lid}") or {}
+    if am.get("impressa") and am.get("l"):
+        return (float(am["l"]), float(am["a"]), float(am["p"]))
+    path = (model or {}).get("file_path")
+    return texto.dimensoes(ROOT / path) if path else None
+
+
+def creditos_modelo(lid, model):
+    """Fonte, autor e licença do modelo baixado, para o anúncio. O autor sai da busca que escolheu o modelo, se não veio no modelo."""
+    model = model or {}
+    info = model.get("info") or {}
+    autor = info.get("author", "") or next((r.get("author", "") for r in (get_setting(f"msearch:{lid}") or {}).get("results", [])
+                                           if str(r.get("id")) == str(info.get("model_id"))), "")
+    licenca = (model.get("license_note") or "não informada").replace("—", "-")  # sem travessão no anúncio
+    return f"Modelo original: {model.get('source_url') or 'não informado'}" + (f", por {autor}" if autor else "") + f". Licença: {licenca}."
+
+
+def set_pecas(lid, n):
+    """Peças por venda. Mudou o número, a ficha do texto muda: o kit volta para confirmar."""
+    n = int(n)
+    if not 1 <= n <= 10:
+        raise ValueError("peças por venda: de 1 a 10")
+    put_setting(f"pecas:{lid}", n)
+    with lock, db() as c:
+        c.execute("UPDATE kits SET confirmed=0 WHERE listing_id=?", (lid,))
+        c.execute("UPDATE steps SET status='pending' WHERE listing_id=? AND name='kit'", (lid,))
 
 
 def run_copy(lid):
@@ -322,10 +370,10 @@ def run_copy(lid):
         cand = next((c for c in candidates() if c["id"] == lid), None)
         if not cand or not cand["slice"] or not cand["target_price"]:
             raise ValueError("fatie o modelo e defina o preço-alvo antes de gerar o texto")
-        b = get_business()
-        d = texto.generate(dict(title=cand["title"], price=cand["target_price"], material=(cand["material"] or "").strip(": ") or "PLA",
-                                minutes=cand["slice"]["minutes"], grams=cand["slice"]["grams"], brand=b["nome"], colors=b["cores"],
-                                sizes=b["medidas"], days=b["prazo_dias"]))
+        b, pec = get_business(), pecas_do_anuncio(lid)
+        d = texto.generate(dict(title=cand["title"], price=cand["target_price"], material=MATERIAL, grams=cand["slice"]["grams"] * pec, pecas=pec,
+                                dims=dimensoes_produto(lid, cand["model"]), creditos=creditos_modelo(lid, cand["model"]),
+                                brand=b["nome"], colors=b["cores"], days=b["prazo_dias"]))
         set_kit(lid, d)
         step("ok")
     except Exception as e:  # erro fica visível no card da GUI
@@ -385,12 +433,11 @@ def ordem_kit(cand):
 
 
 def publicar_pack(lid):
-    """Texto, preço, créditos e prazo para colar no cadastro manual do Mercado Livre. A categoria vem da busca pública do ML e fica guardada."""
+    """Anúncio para colar no cadastro manual: título, preço e categoria por marketplace; o resto é igual nos dois."""
     cand = next((c for c in candidates() if c["id"] == lid), None)
     if not cand or not cand["kit"]:
         raise ValueError("o produto ainda não tem texto")
     k, model, sl = cand["kit"], cand["model"] or {}, cand["slice"]
-    ml_margin = (cand["margin"] or {}).get("ml") or {}
     cat = get_setting(f"categorias:{lid}")
     if cat is None:
         try:
@@ -398,12 +445,22 @@ def publicar_pack(lid):
             put_setting(f"categorias:{lid}", cat)  # busca pública: guarda mesmo vazia, para não repetir a chamada
         except Exception:
             cat = []  # sem internet: a categoria fica para escolher no cadastro, sem erro
-    return dict(titulo=k["title"], descricao=k["description"], bullets=k["bullets"], palavras_chave=k["keywords"], confirmado=bool(k["confirmed"]),
-                preco=cand["target_price"], preco_minimo=ml_margin.get("preco_minimo"), lucro=ml_margin.get("lucro"), margem_alvo=get_costs()["margem_alvo_pct"],
-                categorias=cat, creditos=f"Modelo original: {model.get('source_url') or 'não informado'}. Licença: {model.get('license_note') or 'não informada'}.",
-                prazo_dias=get_business()["prazo_dias"], tempo_min=sl["minutes"] if sl else None, gramas=sl["grams"] if sl else None,
-                imagens=[arc for arc, _ in ordem_kit(cand)], video=(PRODUCTS / str(lid) / "kit" / "video.mp4").is_file(),
-                modelo=bool(model.get("file_path")), fatia=bool(cand["slice_file"]), publicado=cand["publications"].get("ml"))
+    pec = pecas_do_anuncio(lid)
+    canais = {}
+    for ch in ("ml", "shopee"):
+        mg = (cand["margin"] or {}).get(ch) or {}
+        minimo, preco = mg.get("preco_minimo"), cand["target_price"]
+        canais[ch] = dict(titulo=k["title"] if ch == "ml" else (k.get("titulo_shopee") or k["title"]), limite=texto.TITULO_MAX[ch], preco=preco,
+                          minimo=minimo, sugerido=max(preco, math.ceil(minimo)) if minimo else preco, lucro=mg.get("lucro"),
+                          categorias=cat if ch == "ml" else [], publicado=cand["publications"].get(ch),
+                          proprio=ch == "ml" or bool(k.get("titulo_shopee")))
+    dims = dimensoes_produto(lid, model)
+    return dict(canais=canais, descricao=k["description"], bullets=k["bullets"], palavras_chave=k["keywords"], confirmado=bool(k["confirmed"]),
+                margem_alvo=get_costs()["margem_alvo_pct"], creditos=creditos_modelo(lid, model), prazo_dias=get_business()["prazo_dias"], pecas=pec,
+                aviso=f"O modelo baixado é uma peça só e este anúncio vende {pec}. Imprima as {pec} antes de publicar." if pec > 1 else "",
+                dimensoes=" x ".join(texto.num_br(v) for v in dims) + " mm" if dims else "", tempo_min=sl["minutes"] * pec if sl else None,
+                gramas=sl["grams"] * pec if sl else None, imagens=[arc for arc, _ in ordem_kit(cand)],
+                video=(PRODUCTS / str(lid) / "kit" / "video.mp4").is_file(), modelo=bool(model.get("file_path")), fatia=bool(cand["slice_file"]))
 
 
 def abrir_arquivo(lid, what):
@@ -1219,14 +1276,15 @@ def candidates():
             model = c.execute("SELECT source_url,license_note,file_path,info,added_at FROM models WHERE listing_id=?", (l["id"],)).fetchone()
             sl = c.execute("SELECT minutes,grams FROM slices WHERE listing_id=?", (l["id"],)).fetchone()
             slmsg = c.execute("SELECT data FROM steps WHERE listing_id=? AND name='slice'", (l["id"],)).fetchone()
-            kit = c.execute("SELECT title,description,bullets,scripts,keywords,confirmed FROM kits WHERE listing_id=?", (l["id"],)).fetchone()
+            kit = c.execute("SELECT title,titulo_shopee,description,bullets,scripts,keywords,confirmed FROM kits WHERE listing_id=?", (l["id"],)).fetchone()
             cpmsg = c.execute("SELECT data FROM steps WHERE listing_id=? AND name='copy'", (l["id"],)).fetchone()
             pubs = {r["channel"]: dict(r) for r in c.execute("SELECT channel,external_id,url,status FROM publications WHERE listing_id=?", (l["id"],))}
             vmsg = c.execute("SELECT data FROM steps WHERE listing_id=? AND name='video'", (l["id"],)).fetchone()
             impath = c.execute("SELECT data FROM steps WHERE listing_id=? AND name='images'", (l["id"],)).fetchone()
             cprice = c.execute("SELECT data FROM steps WHERE listing_id=? AND name='cost'", (l["id"],)).fetchone()
             target = (json.loads(cprice["data"]).get("price") if cprice else None) or l["price"]
-            margin = {ch: custos.calc(cc, sl["minutes"], sl["grams"], target, ch) for ch in ("ml", "shopee")} if sl and target else None
+            pec = pecas_do_anuncio(l["id"])  # o custo e o tempo são de todas as peças vendidas
+            margin = {ch: custos.calc(cc, sl["minutes"] * pec, sl["grams"] * pec, target, ch) for ch in ("ml", "shopee")} if sl and target else None
             rows.append(dict(l) | dict(sold=last["sold"], reviews=last["reviews"], growth=growth, snapshots=len(snaps),
                                       sold_growth=last["sold"] - first["sold"], since=first["ts"], last_seen=last["ts"], model=dict(model) | dict(info=json.loads(model["info"] or "{}")) if model else None, msearch=get_setting(f"msearch:{l['id']}"), slice_file=(sl_file["file_path"] if (sl_file := c.execute("SELECT file_path FROM slices WHERE listing_id=?", (l["id"],)).fetchone()) else ""), slice=dict(sl) if sl else None, margin=margin, target_price=target,
                                       kit=dict(kit) | {k: json.loads(kit[k]) for k in ("bullets", "scripts", "keywords")} if kit else None,
@@ -1243,7 +1301,7 @@ def candidates():
             spd = selecao.sales_per_day(last["sold"], l["created"])
             comp = None
             if sl and l["status"] == "approved":  # margem ao preço dos concorrentes: só para quem já tem tempo e peso
-                comp = {ch: custos.at_competitor(cc, sl["minutes"], sl["grams"], selecao.price_band(selecao.similar_rows(rows[-1], rows), l["id"]), ch) for ch in ("ml", "shopee")}
+                comp = {ch: custos.at_competitor(cc, sl["minutes"] * pec, sl["grams"] * pec, selecao.price_band(selecao.similar_rows(rows[-1], rows), l["id"]), ch) for ch in ("ml", "shopee")}
             rows[-1].update(amostra=get_setting(f"amostra:{l['id']}") or dict(impressa=False, l=None, a=None, p=None, notas=""), fotos=selecao.photo_plan(rows[-1]["images"]), margem_concorrente=comp, tese=get_setting(f"tese:{l['id']}"), filtros=selecao.evaluate(l["title"], F, mesh.get("stats"), sl["minutes"] if sl else None, mesh.get("support")) | dict(mesh_msg=mesh.get("msg", ""), mesh_status=mesh.get("status", ""),
                             stats=mesh.get("stats")), per_day=spd, age_days=selecao.age_days(l["created"]), champion=selecao.is_champion(spd, F))
         return sorted(rows, key=lambda r: (r["filtros"]["status"] == "reprovado", -r["score"]))  # reprovados nos filtros vão para o fim
@@ -1723,6 +1781,12 @@ class H(BaseHTTPRequestHandler):
             try:
                 set_business(data)
             except ValueError as e:
+                return self._json(dict(error=str(e)), 400)
+            return self._json(dict(ok=True))
+        if path == "/api/publicar/pecas":
+            try:
+                set_pecas(int(data["id"]), data["pecas"])
+            except (ValueError, TypeError, KeyError) as e:
                 return self._json(dict(error=str(e)), 400)
             return self._json(dict(ok=True))
         if path == "/api/kit":
