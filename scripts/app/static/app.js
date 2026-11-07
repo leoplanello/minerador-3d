@@ -297,8 +297,8 @@ const VIEWS = {
       $('pcard').onclick = async e => {
         const cp = e.target.closest('[data-copy]'), ab = e.target.closest('[data-abrir]'), mp = e.target.closest('[data-mp]');
         if (mp) { PMP = mp.dataset.mp; return drawPack(); }
-        if (e.target.closest('#pcopiatudo')) { try { await navigator.clipboard.writeText(PTUDO); toast('Copiado'); } catch (err) { toast('Não consegui copiar: selecione o texto e copie'); } return; }
-        if (cp) { try { await navigator.clipboard.writeText(PCOPY[+cp.dataset.copy]); toast('Copiado'); } catch (err) { toast('Não consegui copiar: selecione o texto e copie'); } }
+        if (e.target.closest('#pcopiatudo')) { try { await copiar(PTUDO); toast('Copiado'); } catch (err) { toast('Não consegui copiar: selecione o texto e copie'); } return; }
+        if (cp) { try { await copiar(PCOPY[+cp.dataset.copy]); toast('Copiado'); } catch (err) { toast('Não consegui copiar: selecione o texto e copie'); } }
         if (ab) { const r = await post('/api/abrir', {id: id(), what: ab.dataset.abrir}); toast(r.error || 'Aberto'); }
       };
       $('pmarca').onclick = async () => { const r = await post('/api/publicado', {id: id(), channel: 'ml', url: $('purl').value}); toast(r.error || 'Marcado como publicado'); load(); };
@@ -528,6 +528,13 @@ function warnings(c) {
   return w;
 }
 // o produto de relance: anúncio de origem, modelo escolhido (exatamente qual), números e texto
+// copia pelo clipboard do navegador; sem permissão, cai para a seleção de um campo escondido
+async function copiar(t) {
+  try { await navigator.clipboard.writeText(t); } catch (e) {
+    const a = document.createElement('textarea'); a.value = t; document.body.appendChild(a); a.select();
+    const ok = document.execCommand('copy'); a.remove(); if (!ok) throw e;
+  }
+}
 // cartão Pronto para publicar: um bloco por marketplace (título, preço, categoria); o resto é igual nos dois
 let PCOPY = [], PTUDO = '', PPACK = null, PCUR = null, PMP = 'ml';
 async function renderPack(c) {

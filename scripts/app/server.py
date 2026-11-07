@@ -345,7 +345,8 @@ def creditos_modelo(lid, model):
     info = model.get("info") or {}
     autor = info.get("author", "") or next((r.get("author", "") for r in (get_setting(f"msearch:{lid}") or {}).get("results", [])
                                            if str(r.get("id")) == str(info.get("model_id"))), "")
-    return f"Modelo original: {model.get('source_url') or 'não informado'}" + (f", por {autor}" if autor else "") + f". Licença: {model.get('license_note') or 'não informada'}."
+    licenca = (model.get("license_note") or "não informada").replace("—", "-")  # sem travessão no anúncio
+    return f"Modelo original: {model.get('source_url') or 'não informado'}" + (f", por {autor}" if autor else "") + f". Licença: {licenca}."
 
 
 def set_pecas(lid, n):
