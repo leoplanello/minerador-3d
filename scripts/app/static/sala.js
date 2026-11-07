@@ -2,7 +2,7 @@
 // e gera imagem e vídeo. Pré-visualização rápida em EEVEE antes do render final em Cycles.
 const SALA = {
   id: null, data: null, busy: false,
-  SPF: {rapido: 2.5, alta: 5, cycles: 55},  // segundos por quadro 1080×1920 medidos nesta máquina (i5-1135G7, sem GPU NVIDIA); ver README
+  SPF: {rapido: 1.6, alta: 6, cycles: 55},  // segundos por quadro medidos nesta máquina (i5-1135G7, sem GPU NVIDIA): padrão em 720×1280, alta em 1080×1920; Cycles é estimativa não medida (ver README)
   L: {ambiente: 'Ambiente', colocacao: 'Onde a peça fica', referencia: 'Objeto de referência (para ver a escala)', camera: 'Câmera', luz: 'Luz'},
   V: {colocacao: {chao: 'No chão', mesa: 'Sobre a mesa ou móvel', parede: 'Na parede', prateleira: 'Numa prateleira'}, referencia: {nenhuma: 'Nenhum', moeda: 'Moeda (27 mm)', caneca: 'Caneca (8 × 9,5 cm)', celular: 'Celular (15 cm)'},
       camera: {'3/4': 'Três quartos', frontal: 'Frontal', close: 'Close', orbital: 'Orbital (só no vídeo)'}, luz: {dia: 'Dia', tarde: 'Tarde', noite: 'Noite'}},
@@ -46,7 +46,7 @@ const SALA = {
     const upd = () => { $('sl_escv').textContent = $('sl_escala').value + '%'; $('sl_girov').textContent = $('sl_giro').value + '°';
       const s = +$('slseg').value || 8, cy = $('slcyc').checked, alta = $('slalta').checked;
       const spf = cy ? SALA.SPF.cycles : alta ? SALA.SPF.alta : SALA.SPF.rapido, min = Math.max(1, Math.round(s * 24 * spf / 60));
-      $('slest').textContent = `Vídeo de ${s} s (${s * 24} quadros, 1080 × 1920): cerca de ${min} min nesta máquina${cy ? ' em Cycles' : alta ? ' em EEVEE, alta qualidade' : ' em EEVEE'}. A volta é de 360° e fecha em loop.`; };
+      $('slest').textContent = `Vídeo de ${s} s (${s * 24} quadros): cerca de ${min} min nesta máquina${cy ? ' em Cycles' : alta ? ' em EEVEE, alta qualidade (1080 × 1920)' : ' em EEVEE (720 × 1280, ampliado para 1080 × 1920)'}. A volta é de 360° e fecha em loop.`; };
     $('salacard').oninput = upd; upd();
     $('slfile').onchange = async e => { const f = e.target.files[0]; if (!f) return;
       const r = await (await fetch(`/api/cena/modelo?id=${c.id}&name=${encodeURIComponent(f.name)}`, {method: 'POST', body: f})).json();

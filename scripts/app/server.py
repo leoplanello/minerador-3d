@@ -1154,6 +1154,8 @@ def run_cena(lid, cena, kind, seconds=8, fps=24, engine="EEVEE", qualidade="rapi
                 job.update(status="ok", msg=f"Imagem cena_{n}.jpg guardada nas imagens do produto.", file=f"cena_{n}.jpg")
             else:
                 W, H = videos.FORMATS[video_cfg()["format"]]
+                if qualidade != "normal":  # padrão: renderiza 2/3 do tamanho (720×1280) para caber em minutos; o ffmpeg amplia no arquivo final
+                    W, H = W * 2 // 3 // 2 * 2, H * 2 // 3 // 2 * 2
                 n = max(2, round(seconds * fps))
                 if usa_blend:
                     frames = renderizar.render_blend_frames(blend, cena_dir(lid) / "quadros", n, engine=engine, res=(W, H))

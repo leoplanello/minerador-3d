@@ -360,8 +360,8 @@ def test_sala_virtual_na_tela_do_produto(gui):
         page.goto(f"{gui}/#/producao/2")
         page.wait_for_selector("#slprev")
         txt = page.inner_text("#salacard")
-        assert "Sala virtual" in txt and "Pré-visualizar" in txt and "Gerar vídeo orbital" in txt
-        assert page.locator("#sl_ambiente option").count() == 8 and page.locator("#sl_colocacao option").count() == 4
+        assert "Sala virtual" in txt and "Pré-visualizar" in txt and "Gerar vídeo em 360°" in txt
+        assert page.locator("#sl_ambiente option").count() == 9 and page.locator("#sl_colocacao option").count() == 4
         page.select_option("#sl_luz", "noite")
         page.fill("#sl_escala", "250")
         assert "250%" in page.inner_text("#sl_escv")
@@ -477,7 +477,7 @@ def test_sala_importada_pede_download_e_libera_depois_de_baixar(gui, monkeypatch
         page = b.new_page(viewport={"width": 1280, "height": 800})
         page.goto(f"{gui}/#/producao/2")
         page.wait_for_selector("#slprev")
-        assert page.locator("#sl_ambiente option").count() == 8 and "Apartamento 3 quartos" in page.inner_text("#sl_ambiente")
+        assert page.locator("#sl_ambiente option").count() == 9 and "Apartamento 3 quartos" in page.inner_text("#sl_ambiente")
         assert "nickadamsss" in page.inner_text("#salacard") and "CGTrader" in page.inner_text("#salacard") and "retirada" in page.inner_text("#salacard")  # créditos sempre na tela
         page.select_option("#sl_ambiente", "apartamento-3-quartos")
         page.wait_for_selector("#sldl")
