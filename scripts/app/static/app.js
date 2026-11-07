@@ -561,7 +561,7 @@ function drawPack() {
     ['Prazo de produção e envio', prazo, prazo]];
   PCOPY = campos.map(x => x[2]);
   PTUDO = [ch.titulo, `R$ ${dinheiro(ch.sugerido)}`, k.descricao, bul, 'Palavras-chave: ' + kw].join('\n\n');
-  $('pcampos').innerHTML = campos.map(([l, v, cp], i) => `<div class="pcampo"><div class="grow"><b class="small">${esc(l)}</b><div class="pv">${esc(v).replace(/\n/g, '<br>')}</div></div>${cp ? `<button class="sm" data-copy="${i}">Copiar</button>` : ''}</div>`).join('')
+  $('pcampos').innerHTML = campos.map(([l, v, cp], i) => `<div class="pcampo"><div class="grow"><b class="small ${i === 0 ? (ch.titulo.length <= ch.limite ? 'lim-ok' : 'lim-err') : ''}">${esc(l)}</b><div class="pv">${esc(v).replace(/\n/g, '<br>')}</div></div>${cp ? `<button class="sm" data-copy="${i}">Copiar</button>` : ''}</div>`).join('')
     + `<div class="pcampo"><div class="grow"><b class="small">Imagens na ordem do kit${k.video ? ' + vídeo' : ''}</b><div class="pv small">${k.imagens.map(esc).join('<br>') || 'Gere as imagens primeiro.'}</div></div></div>`;
   $('paviso').hidden = !k.aviso; $('paviso').textContent = k.aviso;
   $('ppecas').value = k.pecas;
