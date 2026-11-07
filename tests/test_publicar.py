@@ -1,5 +1,6 @@
 """Cartão 'Pronto para publicar': campos para copiar, kit na ordem certa, abrir arquivos e marcação manual."""
 import io
+import math
 import sys
 import zipfile
 from pathlib import Path
@@ -38,15 +39,52 @@ def _produto(tmp_path, monkeypatch):
     (d / "slice" / "suporte.gcode.3mf").write_bytes(b"sliced")
 
 
-def test_pack_traz_campos_preco_minimo_creditos_e_ordem(tmp_path, monkeypatch):
+def test_pack_traz_um_bloco_por_marketplace_com_preco_minimo_e_creditos(tmp_path, monkeypatch):
     _produto(tmp_path, monkeypatch)
     p = server.publicar_pack(1)
-    assert p["titulo"] == "Suporte para celular" and p["bullets"] == ["a", "b"] and p["palavras_chave"] == ["suporte"]
-    assert p["preco"] == 39 and p["preco_minimo"] and p["preco_minimo"] > 0
+    ml, sh = p["canais"]["ml"], p["canais"]["shopee"]
+    assert ml["titulo"] == "Suporte para celular" and ml["limite"] == 60 and sh["limite"] == 120
+    assert sh["titulo"] == "Suporte para celular" and sh["proprio"] is False  # sem título próprio, usa o do ML e avisa
+    assert p["bullets"] == ["a", "b"] and p["palavras_chave"] == ["suporte"]
+    assert ml["preco"] == 39 and ml["minimo"] > 0 and ml["sugerido"] >= ml["minimo"] and ml["sugerido"] >= 39
+    assert sh["minimo"] is not None and p["margem_alvo"] == 40
     assert "CC-BY" in p["creditos"] and "makerworld" in p["creditos"]
-    assert p["categorias"] == []  # sem internet, a categoria fica para escolher no cadastro
+    assert ml["categorias"] == [] and sh["categorias"] == []  # sem internet, a categoria fica para escolher no cadastro
     assert p["imagens"] == ["01-foto-real-photo_1.jpg", "02-ambiente-3d-render_1.jpg"]
     assert p["tempo_min"] == 120 and p["gramas"] == 40 and p["modelo"] and p["fatia"] and not p["confirmado"]
+    assert p["pecas"] == 1 and p["aviso"] == ""
+
+
+def test_sugerido_sobe_para_o_minimo_quando_o_preco_nao_cobre_a_margem(tmp_path, monkeypatch):
+    _produto(tmp_path, monkeypatch)
+    server.set_price(1, 20)
+    ml = server.publicar_pack(1)["canais"]["ml"]
+    assert ml["preco"] == 20 and ml["sugerido"] == math.ceil(ml["minimo"]) and ml["minimo"] > 20
+
+
+def test_pecas_por_venda_dobram_custo_e_mostram_aviso_e_pedem_novo_texto(tmp_path, monkeypatch):
+    _produto(tmp_path, monkeypatch)
+    minimo_1 = server.publicar_pack(1)["canais"]["ml"]["minimo"]
+    server.set_pecas(1, 2)
+    p = server.publicar_pack(1)
+    assert p["pecas"] == 2 and "vende 2" in p["aviso"] and p["canais"]["ml"]["minimo"] > minimo_1
+    assert p["gramas"] == 80 and p["tempo_min"] == 240  # o peso e o tempo são de duas peças
+    assert not p["confirmado"]
+    with server.db() as c:
+        assert c.execute("SELECT status FROM steps WHERE listing_id=1 AND name='kit'").fetchone()[0] == "pending"
+    with pytest.raises(ValueError, match="1 a 10"):
+        server.set_pecas(1, 0)
+
+
+def test_titulo_da_shopee_guardado_e_editado_sem_perder(tmp_path, monkeypatch):
+    _produto(tmp_path, monkeypatch)
+    server.set_kit(1, dict(title="Suporte para celular", titulo_shopee="Suporte celular mesa PLA impresso 3D", description="d" * 90, bullets=["a"], scripts=["s"], keywords=["k"]))
+    assert server.publicar_pack(1)["canais"]["shopee"]["titulo"] == "Suporte celular mesa PLA impresso 3D"
+    server.set_kit(1, dict(title="Outro título do ML", description="d" * 90))  # edição sem o campo da Shopee mantém o título
+    p = server.publicar_pack(1)
+    assert p["canais"]["shopee"]["titulo"] == "Suporte celular mesa PLA impresso 3D" and p["canais"]["ml"]["titulo"] == "Outro título do ML"
+    with pytest.raises(ValueError, match="Shopee"):
+        server.set_kit(1, dict(title="Suporte celular", titulo_shopee="x" * 121, description="d" * 90))
 
 
 def test_pack_exige_texto(tmp_path, monkeypatch):
@@ -96,6 +134,6 @@ def test_marcacao_manual_do_mercado_livre_com_link(tmp_path, monkeypatch):
     server.mark_publicado(1, "ml", "https://produto.mercadolivre.com.br/MLB-1")
     cand = server.candidates()[0]
     assert cand["steps"]["ml"] == "ok" and cand["publications"]["ml"]["url"].endswith("MLB-1")
-    assert server.publicar_pack(1)["publicado"]["url"].endswith("MLB-1")
+    assert server.publicar_pack(1)["canais"]["ml"]["publicado"]["url"].endswith("MLB-1")
     server.mark_shopee(1, "https://shopee.com.br/produto-1")  # o caminho da Shopee continua igual
     assert server.candidates()[0]["steps"]["shopee"] == "ok"

@@ -218,7 +218,8 @@ const VIEWS = {
       <div class="card" id="tcard" hidden><div class="card-h"><h2>Texto do anúncio</h2><span id="tchip" class="chip"></span></div>
         <p id="tstate" class="small mut" style="margin:0 0 12px"></p>
         <div class="form">
-          <label>Título (até 60 caracteres) <span id="tcount"></span><input id="ttitle" maxlength="60"></label>
+          <label>Título do Mercado Livre (até 60 caracteres) <span id="tcount"></span><input id="ttitle" maxlength="60"></label>
+          <label>Título da Shopee (até 120 caracteres)<input id="tshopee" maxlength="120"></label>
           <label>Descrição<textarea id="tdesc" style="min-height:160px"></textarea></label>
           <label>Bullets (um por linha)<textarea id="tbul" style="min-height:90px"></textarea></label>
           <label>Roteiros de vídeo (separe com uma linha em branco)<textarea id="tscr" style="min-height:120px"></textarea></label>
@@ -245,8 +246,12 @@ const VIEWS = {
           <span class="grow"></span><a id="kzip" class="btn" href="#">Baixar kit (.zip)</a><button id="kok" class="pri">Confirmar kit</button></div>
         <div id="kprev"></div></div>
       <div class="card" id="pcard" hidden><div class="card-h"><h2>Pronto para publicar</h2><span id="pchip" class="chip"></span></div>
-        <p id="pstate" class="small mut" style="margin:0 0 12px">Publique à mão no Mercado Livre: copie cada campo, cole no cadastro e depois marque o link aqui.</p>
+        <div class="row" style="margin:0 0 12px"><div class="seg" role="group" aria-label="Marketplace"><button data-mp="ml" aria-pressed="true">Mercado Livre</button><button data-mp="shopee" aria-pressed="false">Shopee</button></div>
+          <span class="grow"></span><button id="pcopiatudo" class="pri">Copiar tudo</button></div>
+        <p id="paviso" class="small" style="color:var(--red);margin:0 0 12px" hidden></p>
+        <p id="pstate" class="small mut" style="margin:0 0 12px"></p>
         <div id="pcampos" class="pcampos"></div>
+        <div class="row" style="margin:12px 0"><label class="small mut">Peças por venda <input id="ppecas" type="number" min="1" max="10" style="width:72px"></label><button id="ppecasok">Salvar peças</button></div>
         <div class="row" style="margin:12px 0"><button data-abrir="pasta">Abrir pasta</button><a id="pzip" class="btn" href="#">Baixar tudo (.zip)</a></div>
         <h3 class="small" style="margin:12px 0 4px">Impressão (só depois da venda)</h3>
         <div class="row"><button data-abrir="modelo" id="pmodelo">Abrir modelo</button><button data-abrir="bambu" id="pbambu">Abrir no Bambu Studio</button><span id="ptempo" class="small mut"></span></div>
@@ -290,7 +295,9 @@ const VIEWS = {
         if (vc.motion === 'camera' && vc.engine === 'cycles' && !confirm(($('vest').textContent.match(/Tempo estimado: [^(]*/) || ['Vai demorar horas'])[0] + '. Renderizar o vídeo em Cycles mesmo assim?')) return; const sv = await post('/api/media/config', {video: cfgRead('v', VID_FIELDS)}); if (sv.error) return toast(sv.error);
         const r = await post('/api/video', {id: id()}); toast(r.error || 'Gerando o vídeo…'); load(); };
       $('pcard').onclick = async e => {
-        const cp = e.target.closest('[data-copy]'), ab = e.target.closest('[data-abrir]');
+        const cp = e.target.closest('[data-copy]'), ab = e.target.closest('[data-abrir]'), mp = e.target.closest('[data-mp]');
+        if (mp) { PMP = mp.dataset.mp; return drawPack(); }
+        if (e.target.closest('#pcopiatudo')) { try { await navigator.clipboard.writeText(PTUDO); toast('Copiado'); } catch (err) { toast('Não consegui copiar: selecione o texto e copie'); } return; }
         if (cp) { try { await navigator.clipboard.writeText(PCOPY[+cp.dataset.copy]); toast('Copiado'); } catch (err) { toast('Não consegui copiar: selecione o texto e copie'); } }
         if (ab) { const r = await post('/api/abrir', {id: id(), what: ab.dataset.abrir}); toast(r.error || 'Aberto'); }
       };
@@ -338,8 +345,9 @@ const VIEWS = {
         const r = await post('/api/media/order', {id: c.id, order: names, hidden}); toast(r.error || 'Ordem salva'); load(); };
       $('tgen').onclick = async () => { const r = await post('/api/copy', {id: id()}); toast(r.error || 'Gerando o texto… leva cerca de 1 minuto'); load(); };
       $('ttitle').oninput = () => $('tcount').textContent = `(${$('ttitle').value.length}/60)`;
+      $('ppecasok').onclick = async () => { const r = await post('/api/publicar/pecas', {id: id(), pecas: +$('ppecas').value}); toast(r.error || 'Peças salvas. Gere o texto de novo para a ficha mostrar isso.'); load(); };
       $('tsave').onclick = async () => { const lines = t => t.split('\n').map(x => x.trim()).filter(Boolean);
-        const r = await post('/api/kit', {id: id(), title: $('ttitle').value, description: $('tdesc').value, bullets: lines($('tbul').value),
+        const r = await post('/api/kit', {id: id(), title: $('ttitle').value, titulo_shopee: $('tshopee').value, description: $('tdesc').value, bullets: lines($('tbul').value),
           scripts: $('tscr').value.split(/\n\s*\n/).map(x => x.trim()).filter(Boolean), keywords: $('tkey').value.split(',').map(x => x.trim()).filter(Boolean)});
         toast(r.error || 'Texto salvo'); if (!r.error) { $('tcard').dataset.init = ''; } load(); };
       $('cpsave').onclick = async () => { const r = await post('/api/price', {id: id(), price: $('cprice').value}); toast(r.error || 'Preço salvo'); load(); };
@@ -438,7 +446,7 @@ const VIEWS = {
       $('tchip').className = 'chip ' + ts; $('tchip').textContent = {pending:'Falta gerar', running:'Gerando', ok:'Pronto', error:'Erro'}[ts] || ts;
       $('tgen').disabled = ts === 'running'; $('tgen').textContent = c.kit ? 'Gerar de novo com Claude' : 'Gerar com Claude';
       $('tstate').textContent = ts === 'error' ? c.copy_msg : c.kit ? 'Edite o que quiser e clique em Salvar edições.' : 'O Claude escreve título, descrição, bullets e roteiros com os dados do produto. Preencha o nome da loja, as cores e as medidas em Configurações antes.';
-      if (c.kit && !$('tcard').dataset.init) { const k = c.kit; $('ttitle').value = k.title; $('tdesc').value = k.description; $('tbul').value = k.bullets.join('\n');
+      if (c.kit && !$('tcard').dataset.init) { const k = c.kit; $('ttitle').value = k.title; $('tshopee').value = k.titulo_shopee || ''; $('tdesc').value = k.description; $('tbul').value = k.bullets.join('\n');
         $('tscr').value = k.scripts.join('\n\n'); $('tkey').value = k.keywords.join(', '); $('tcard').dataset.init = 1; $('ttitle').oninput(); }
       $('ccard').hidden = !c.margin;
       if (c.margin) {
@@ -520,31 +528,47 @@ function warnings(c) {
   return w;
 }
 // o produto de relance: anúncio de origem, modelo escolhido (exatamente qual), números e texto
-let PCOPY = [];
-// cartão Pronto para publicar: campos para copiar e o que o cadastro manual pede
+// cartão Pronto para publicar: um bloco por marketplace (título, preço, categoria); o resto é igual nos dois
+let PCOPY = [], PTUDO = '', PPACK = null, PCUR = null, PMP = 'ml';
 async function renderPack(c) {
   $('pcard').hidden = !c.kit;
   if (!c.kit) return;
   const k = await (await fetch('/api/publicar?id=' + c.id)).json();
   if (k.error || route[1] !== String(c.id) || !$('pcard')) return;
-  const campos = [['Título', k.titulo, k.titulo], ['Descrição', k.descricao, k.descricao],
-    ['Ficha técnica (bullets)', k.bullets.map(b => '- ' + b).join('\n'), k.bullets.map(b => '- ' + b).join('\n')],
-    ['Palavras-chave', k.palavras_chave.join(', '), k.palavras_chave.join(', ')],
-    ['Preço', `${brl(k.preco)} · mínimo para a margem de ${pct(k.margem_alvo)}: ${brl(k.preco_minimo)}`, k.preco == null ? '' : Number(k.preco).toFixed(2)],
-    ['Categoria sugerida', k.categorias.length ? k.categorias.map(x => x.nome).join(' · ') : 'Não sugerida: busque pelo título no cadastro do Mercado Livre', k.categorias[0] ? k.categorias[0].nome : ''],
+  PPACK = k; PCUR = c; drawPack();
+}
+function drawPack() {
+  const k = PPACK, c = PCUR, ch = k.canais[PMP], ml = PMP === 'ml';
+  const dinheiro = v => v == null ? '' : Number(v).toLocaleString('pt-BR', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+  document.querySelectorAll('[data-mp]').forEach(b => b.setAttribute('aria-pressed', b.dataset.mp === PMP));
+  const bul = k.bullets.map(b => '- ' + b).join('\n'), kw = k.palavras_chave.join(', '), prazo = `${k.prazo_dias} dias úteis, impresso depois da compra`;
+  const campos = [
+    [`Título (${ch.titulo.length} de ${ch.limite} caracteres)`, ch.titulo, ch.titulo],
+    ['Descrição', k.descricao, k.descricao],
+    ['Destaques (bullets)', bul, bul],
+    ['Palavras-chave', kw, kw],
+    ['Preço', `${brl(ch.sugerido)} sugerido · mínimo para a margem de ${pct(k.margem_alvo)}: ${brl(ch.minimo)}`, dinheiro(ch.sugerido)],
+    ['Categoria', ml ? (ch.categorias.length ? ch.categorias.map(x => x.nome).join(' · ') : 'Não sugerida: busque pelo título no cadastro do Mercado Livre') : 'Escolha na Central do Vendedor da Shopee',
+      ml && ch.categorias[0] ? ch.categorias[0].nome : ''],
     ['Créditos do modelo', k.creditos, k.creditos],
-    ['Prazo de produção e envio', `${k.prazo_dias} dias`, String(k.prazo_dias)]];
+    ['Prazo de produção e envio', prazo, prazo]];
   PCOPY = campos.map(x => x[2]);
+  PTUDO = [ch.titulo, `R$ ${dinheiro(ch.sugerido)}`, k.descricao, bul, 'Palavras-chave: ' + kw].join('\n\n');
   $('pcampos').innerHTML = campos.map(([l, v, cp], i) => `<div class="pcampo"><div class="grow"><b class="small">${esc(l)}</b><div class="pv">${esc(v).replace(/\n/g, '<br>')}</div></div>${cp ? `<button class="sm" data-copy="${i}">Copiar</button>` : ''}</div>`).join('')
     + `<div class="pcampo"><div class="grow"><b class="small">Imagens na ordem do kit${k.video ? ' + vídeo' : ''}</b><div class="pv small">${k.imagens.map(esc).join('<br>') || 'Gere as imagens primeiro.'}</div></div></div>`;
-  $('pchip').className = 'chip ' + (k.publicado ? 'ok' : k.confirmado ? 'running' : 'pending');
-  $('pchip').textContent = k.publicado ? 'Publicado' : k.confirmado ? 'Pronto' : 'Confirme o kit';
+  $('paviso').hidden = !k.aviso; $('paviso').textContent = k.aviso;
+  $('ppecas').value = k.pecas;
+  $('pchip').className = 'chip ' + (ch.publicado ? 'ok' : k.confirmado ? 'running' : 'pending');
+  $('pchip').textContent = ch.publicado ? 'Publicado' : k.confirmado ? 'Pronto' : 'Confirme o kit';
   $('pstate').innerHTML = (k.confirmado ? '' : 'Confirme o kit acima antes de publicar; o texto pode mudar. ')
-    + 'Publique à mão no Mercado Livre: copie cada campo, cole no cadastro e depois marque o link aqui.'
-    + (k.publicado && k.publicado.url ? ` Publicado: <a href="${esc(k.publicado.url)}" target="_blank" rel="noopener">${esc(k.publicado.url)}</a>` : '');
+    + (ml ? 'Publique à mão no Mercado Livre: copie cada campo, cole no cadastro e depois marque o link aqui.'
+          : 'Cadastre na Central do Vendedor da Shopee: copie cada campo e cole no cadastro. Depois marque o link no cartão Publicar na Shopee.')
+    + (!ch.proprio ? ' Não há título próprio para a Shopee: o do Mercado Livre foi usado. Edite no Texto do anúncio.' : '')
+    + (ch.publicado && ch.publicado.url ? ` Publicado: <a href="${esc(ch.publicado.url)}" target="_blank" rel="noopener">${esc(ch.publicado.url)}</a>` : '');
   $('pzip').href = `/api/kit/${c.id}.zip`;
   $('pmodelo').disabled = !k.modelo; $('pbambu').disabled = !k.modelo;
-  $('ptempo').textContent = k.tempo_min ? `${Math.floor(k.tempo_min / 60)} h ${k.tempo_min % 60} min · ${Number(k.gramas).toLocaleString('pt-BR', {minimumFractionDigits: 1, maximumFractionDigits: 1})} g de PLA` : 'Fatie para ver tempo e gramas.';
+  $('ptempo').textContent = (k.tempo_min ? `${Math.floor(k.tempo_min / 60)} h ${k.tempo_min % 60} min · ${Number(k.gramas).toLocaleString('pt-BR', {minimumFractionDigits: 1, maximumFractionDigits: 1})} g de PLA` : 'Fatie para ver tempo e gramas.')
+    + (k.dimensoes ? ` · ${k.dimensoes}` : '');
 }
 
 function overview(c) {
