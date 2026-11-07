@@ -1,6 +1,7 @@
 """Modelador a partir de um vídeo: link do Instagram ou YouTube Shorts -> vídeo e texto do post (yt-dlp), transcrição (Whisper),
 troca do áudio pela sua voz gravada (ffmpeg) e busca do modelo 3D que aparece no vídeo (Printables, MakerWorld, Thingiverse).
 Tudo fica em DATA/referencias/<id>. Nada é publicado; o vídeo original só serve de referência para achar o modelo."""
+import json
 import re
 import uuid
 from pathlib import Path
@@ -8,6 +9,7 @@ from urllib.parse import urlparse
 
 import paths
 import proc
+import texto
 import video
 
 PASTA = paths.DATA / "referencias"
@@ -78,23 +80,41 @@ def baixar_powershell(url, pasta):
     return dict(plataforma=plataforma, titulo=dados.get("title") or "", descricao=dados.get("description") or "", video=str(arquivo))
 
 
+def duracao(video_path):
+    """Duração em segundos; 0 se o ffprobe não conseguir ler (a tela avisa)."""
+    try:
+        return video.duration(video_path)
+    except (ValueError, OSError):
+        return 0.0
+
+
 def transcrever(video_path, modelo=WHISPER_MODELO):
-    """Transcrição com faster-whisper (Whisper) no processador. Devolve o texto e o idioma detectado."""
+    """Transcrição com faster-whisper (Whisper) no processador. Devolve o texto, o idioma e as falas com início e fim (segundos)."""
     from faster_whisper import WhisperModel
     m = WhisperModel(modelo, device="cpu", compute_type="int8", download_root=str(paths.DATA / "whisper"))
     segmentos, info = m.transcribe(str(video_path), vad_filter=True)
-    texto = " ".join(s.text.strip() for s in segmentos).strip()
-    return dict(texto=texto, idioma=info.language)
+    falas = [dict(start=round(s.start, 2), end=round(s.end, 2), text=s.text.strip()) for s in segmentos if s.text.strip()]
+    return dict(texto=" ".join(f["text"] for f in falas), idioma=info.language, segmentos=falas)
 
 
-def trocar_audio(video_in, audio_in, video_out):
-    """Põe a sua gravação no lugar do áudio original: o vídeo sai sem mudar, e o som é o que você gravou (AAC)."""
-    cmd = [str(video.FFMPEG), "-y", "-v", "error", "-i", str(video_in), "-i", str(audio_in), "-map", "0:v:0", "-map", "1:a:0",
-           "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-shortest", str(video_out)]
-    r = proc.run(cmd, capture_output=True, text=True, timeout=900)
-    if r.returncode != 0 or not Path(video_out).is_file():
-        raise ValueError("falha ao trocar o áudio: " + (r.stderr or "")[-300:])
-    return Path(video_out)
+def traduzir(falas):
+    """Traduz as falas para português do Brasil com o Claude (claude -p, como o texto do anúncio). Devolve uma tradução por fala, na mesma ordem."""
+    if not falas:
+        return []
+    pedido = (f"Traduza para português do Brasil estas falas de um vídeo, uma por item e na mesma ordem. São legendas: frases curtas, "
+              f"sem travessão (—), sem explicar nada. Responda SOMENTE com um JSON {{\"legendas\": [...]}} com exatamente {len(falas)} itens.\n\n"
+              + json.dumps([f["text"] for f in falas], ensure_ascii=False))
+    r = proc.run([texto._cmd(), "-p"], input=pedido, capture_output=True, text=True, timeout=300, encoding="utf-8")
+    if "not logged in" in (r.stdout + r.stderr).lower() or r.returncode != 0:
+        raise ValueError("o Claude não respondeu para a tradução (confira se ele está logado)")
+    m = re.search(r"\{.*\}", r.stdout, re.S)
+    try:
+        legendas = json.loads(m.group(0))["legendas"]
+    except (AttributeError, ValueError, KeyError, TypeError):
+        raise ValueError("a tradução veio em formato inválido")
+    if len(legendas) != len(falas):
+        raise ValueError("a tradução veio com número de falas diferente do vídeo")
+    return [str(x).replace("—", ",").strip() for x in legendas]
 
 
 def consultas(titulo, descricao, transcricao, limite=3):

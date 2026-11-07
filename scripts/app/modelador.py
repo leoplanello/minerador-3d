@@ -5,7 +5,9 @@ import threading
 from pathlib import Path
 
 import estudio
+import proc
 import referencia
+import video
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "mine"))
 import model_search  # noqa: E402  (busca de modelos: Printables; MakerWorld e Thingiverse precisam de perfil do Chrome)
@@ -58,15 +60,24 @@ def _rodar_download(jid, url, pasta, metodo="python"):
     except Exception as e:  # yt-dlp levanta erros próprios; a tela só precisa da mensagem
         _set(jid, status="error", etapa="erro", msg=f"Não consegui baixar o vídeo: {str(e)[:260]}")
         return
-    _set(jid, titulo=d["titulo"], descricao=d["descricao"], plataforma=d["plataforma"], video=d["video"], etapa="transcrevendo",
-         msg="Vídeo baixado. Transcrevendo com Whisper…")
+    _set(jid, titulo=d["titulo"], descricao=d["descricao"], plataforma=d["plataforma"], video=d["video"], duracao=referencia.duracao(d["video"]),
+         etapa="transcrevendo", msg="Vídeo baixado. Transcrevendo com Whisper…")
     try:
         t = referencia.transcrever(d["video"])
         consultas = referencia.consultas(d["titulo"], d["descricao"], t["texto"])
-        _set(jid, status="ok", etapa="pronto", transcricao=t["texto"], idioma=t["idioma"], consultas=consultas,
-             msg="Pronto: confira o texto, grave sua voz ou busque o modelo.")
+        legendas = [dict(start=f["start"], end=f["end"], text=f["text"], original=f["text"]) for f in t["segmentos"]]
+        aviso = ""
+        if legendas and t["idioma"] != "pt":
+            _set(jid, etapa="traduzindo", msg="Traduzindo as legendas para português…")
+            try:
+                for f, pt in zip(legendas, referencia.traduzir(t["segmentos"])):
+                    f["text"] = pt
+            except Exception as e:  # sem tradução (Claude fora, tempo esgotado), as legendas ficam no idioma original para você editar
+                aviso = f" Não consegui traduzir ({str(e)[:120]}): as legendas estão no idioma original."
+        _set(jid, status="ok", etapa="pronto", transcricao=t["texto"], idioma=t["idioma"], consultas=consultas, legendas=legendas,
+             msg="Pronto: confira o texto, edite as legendas e monte o vídeo." + aviso)
     except Exception as e:  # faster-whisper ausente ou modelo não baixou: o vídeo continua utilizável
-        _set(jid, status="ok", etapa="pronto", transcricao="", idioma="", consultas=referencia.consultas(d["titulo"], d["descricao"], ""),
+        _set(jid, status="ok", etapa="pronto", transcricao="", idioma="", legendas=[], consultas=referencia.consultas(d["titulo"], d["descricao"], ""),
              msg=f"Vídeo pronto, mas a transcrição falhou: {str(e)[:200]}")
 
 
@@ -77,17 +88,52 @@ def gravar_voz(jid, dados):
         raise ValueError("gravação vazia ou maior que 50 MB")
     destino = referencia.PASTA / jid / "voz.webm"
     destino.write_bytes(dados)
-    _set(jid, voz=str(destino), msg="Gravação salva. Aplique para trocar o áudio do vídeo.")
+    _set(jid, voz=str(destino), msg="Voz salva. Escolha como ela entra no vídeo e gere o vídeo final.")
     return estado(jid)
 
 
-def aplicar_voz(jid):
+def _editor(job, cfg, legendas):
+    """Valida o que veio da tela (corte, enquadramento, legendas) contra o vídeo baixado."""
+    if not job.get("video"):
+        raise ValueError("baixe um vídeo antes de editar")
+    ed = video.clean_editor_cfg(cfg, job.get("duracao") or 0)
+    legs = [dict(start=float(s["start"]), end=float(s["end"]), text=str(s["text"])[:400]) for s in legendas]
+    return ed, legs
+
+
+def editar(jid, cfg, legendas):
+    """Gera o vídeo final em segundo plano: corte, enquadramento, legendas em português, faixa sobre a original e sua voz."""
     job = estado(jid)
-    if not job.get("voz") or not job.get("video"):
-        raise ValueError("grave sua voz antes de aplicar")
-    pasta = referencia.PASTA / jid
-    saida = referencia.trocar_audio(job["video"], job["voz"], pasta / "com-sua-voz.mp4")
-    _set(jid, video_final=str(saida), msg="Áudio trocado: o vídeo agora tem a sua voz.")
+    if job.get("status") == "running" and job.get("etapa") == "editando":
+        raise ValueError("o vídeo já está sendo gerado")
+    ed, legs = _editor(job, cfg, legendas)
+    _set(jid, status="running", etapa="editando", msg="Gerando o vídeo final…")
+    threading.Thread(target=_rodar_editor, args=(jid, ed, legs), daemon=True).start()
+    return estado(jid)
+
+
+def _rodar_editor(jid, ed, legs):
+    job = estado(jid)
+    saida = referencia.PASTA / jid / "final.mp4"
+    try:
+        video.editar(job["video"], saida, ed, legs, voz=job.get("voz"))
+        _set(jid, status="ok", etapa="final_pronto", final=str(saida), msg="Vídeo final pronto: baixe ou abra a pasta.")
+    except Exception as e:  # ffmpeg falhou: a tela continua com o editor para você ajustar e tentar de novo
+        _set(jid, status="error", etapa="pronto", msg=f"Não consegui gerar o vídeo: {str(e)[:300]}")
+
+
+def quadro(jid, cfg, legendas):
+    """Prévia rápida: um quadro (cfg['momento'], em segundos do corte) com o mesmo enquadramento, legendas e faixa do vídeo final."""
+    ed, legs = _editor(estado(jid), cfg, legendas)
+    video.editar(estado(jid)["video"], referencia.PASTA / jid / "previa.jpg", ed, legs, quadro=True)
+    return estado(jid)
+
+
+def abrir_pasta(jid):
+    """Abre no Explorer a pasta do trabalho (vídeo original, sua voz, vídeo final e estúdio)."""
+    estado(jid)
+    if sys.platform == "win32":
+        proc.popen(["explorer.exe", str(referencia.PASTA / jid)])  # o Explorer é janela própria, não é escondido
     return estado(jid)
 
 
@@ -151,15 +197,17 @@ def _rodar_estudio(jid, modelo, saida, cor):
 
 
 def caminho_arquivo(jid, nome):
-    """Arquivo do trabalho para a tela: original, sua voz, vídeo com sua voz ou as fotos do estúdio. Nunca sai da pasta do trabalho."""
+    """Arquivo do trabalho para a tela: original, sua voz, prévia, vídeo final ou as fotos do estúdio. Nunca sai da pasta do trabalho."""
     estado(jid)
     pasta = (referencia.PASTA / jid).resolve()
     if nome == "original":
         alvo = next(pasta.glob("original.*"), None)
     elif nome == "voz":
         alvo = pasta / "voz.webm"
-    elif nome == "com-sua-voz":
-        alvo = pasta / "com-sua-voz.mp4"
+    elif nome == "previa":
+        alvo = pasta / "previa.jpg"
+    elif nome == "final":
+        alvo = pasta / "final.mp4"
     elif nome.startswith("estudio/") and ".." not in nome:
         alvo = pasta / nome
     else:
@@ -178,8 +226,12 @@ def rota(path, data):
         return iniciar(str(data["url"]), str(data.get("metodo", "python")))
     if path == "/api/referencia/baixar-de-novo":
         return baixar_de_novo(str(data["id"]), str(data.get("metodo", "powershell")))
-    if path == "/api/referencia/aplicar-voz":
-        return aplicar_voz(str(data["id"]))
+    if path == "/api/referencia/editar":
+        return editar(str(data["id"]), data.get("cfg") or {}, data.get("legendas") or [])
+    if path == "/api/referencia/quadro":
+        return quadro(str(data["id"]), data.get("cfg") or {}, data.get("legendas") or [])
+    if path == "/api/referencia/abrir-pasta":
+        return abrir_pasta(str(data["id"]))
     if path == "/api/referencia/buscar":
         return buscar(str(data["id"]))
     if path == "/api/referencia/estudio":
