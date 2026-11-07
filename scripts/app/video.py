@@ -212,3 +212,119 @@ def make_camera_video(frames, script, out, voice=None, cfg=None, music=None):
     if r.returncode or not out.exists():
         raise ValueError("o ffmpeg falhou: " + r.stderr[-300:])
     return out
+
+
+EDITOR_DEFAULT = dict(inicio=0.0, fim=None, formato="9:16", zoom=1.0, dx=0.0, dy=0.0, legendas=True, legenda_tamanho=52, legenda_pos="bottom",
+                      legenda_cor="#ffffff", legenda_caixa=True, cobrir=False, cobrir_y=0.80, cobrir_h=0.14, cobrir_estilo="caixa",
+                      cobrir_cor="#000000", som_original="silenciar", vol_original=0.3, vol_voz=1.0, qualidade="normal", momento=1.0)
+
+
+def clean_editor_cfg(d, duracao):
+    """Valida o editor (cortes, enquadramento, legendas, faixa sobre a legenda original e voz). Levanta ValueError com o motivo."""
+    if not duracao or duracao <= 0:
+        raise ValueError("não consegui ler a duração do vídeo")
+    cfg = EDITOR_DEFAULT | {k: v for k, v in (d or {}).items() if k in EDITOR_DEFAULT}
+    ini = float(cfg["inicio"] or 0)
+    fim = min(float(cfg["fim"]) if cfg["fim"] not in (None, "") else duracao, duracao)
+    if not 0 <= ini < fim - 0.9:
+        raise ValueError("o corte precisa começar antes do fim e durar pelo menos 1 segundo")
+    if cfg["formato"] not in FORMATS or cfg["legenda_pos"] not in ("bottom", "center", "top") or cfg["qualidade"] not in CRF:
+        raise ValueError("formato, posição da legenda ou qualidade inválidos")
+    if cfg["som_original"] not in ("silenciar", "manter") or cfg["cobrir_estilo"] not in ("caixa", "borrao"):
+        raise ValueError("opção de som ou de faixa inválida")
+    for k in ("legenda_cor", "cobrir_cor"):
+        if not re.fullmatch(r"#[0-9a-fA-F]{6}", str(cfg[k])):
+            raise ValueError("cor inválida")
+    zoom, dx, dy = float(cfg["zoom"]), float(cfg["dx"]), float(cfg["dy"])
+    y, h, size = float(cfg["cobrir_y"]), float(cfg["cobrir_h"]), int(cfg["legenda_tamanho"])
+    vol_o, vol_v, momento = float(cfg["vol_original"]), float(cfg["vol_voz"]), float(cfg["momento"] or 0)
+    if not (1 <= zoom <= 3 and -1 <= dx <= 1 and -1 <= dy <= 1):
+        raise ValueError("enquadramento fora do limite (zoom de 1 a 3, deslocamento de -1 a 1)")
+    if not (0 <= y and 0 < h and y + h <= 1):
+        raise ValueError("faixa da legenda original fora da tela")
+    if not 24 <= size <= 120:
+        raise ValueError("o tamanho da legenda deve ficar entre 24 e 120")
+    if not (0 <= vol_o <= 2 and 0 <= vol_v <= 2):
+        raise ValueError("volume deve ficar entre 0 e 2")
+    return cfg | dict(inicio=ini, fim=fim, zoom=zoom, dx=dx, dy=dy, cobrir_y=y, cobrir_h=h, legenda_tamanho=size, vol_original=vol_o,
+                      vol_voz=vol_v, momento=min(max(momento, 0.0), fim - ini - 0.1), legendas=bool(cfg["legendas"]),
+                      legenda_caixa=bool(cfg["legenda_caixa"]), cobrir=bool(cfg["cobrir"]))
+
+
+def _tem_audio(arquivo):
+    r = proc.run([str(FFPROBE), "-v", "error", "-select_streams", "a", "-show_entries", "stream=index", "-of", "csv=p=0", str(arquivo)],
+                 capture_output=True, text=True)
+    return bool(r.stdout.strip())
+
+
+def _filtro_imagem(cfg, legs, tmp):
+    """Enquadra (zoom e deslocamento dentro do formato), cobre a legenda original se pedido e queima as legendas em português.
+    legs: (inicio, fim, texto) em segundos do corte. Termina em [vout]."""
+    W, H = FORMATS[cfg["formato"]]
+    z, dx, dy = cfg["zoom"], cfg["dx"], cfg["dy"]
+    partes = [f"[0:v]crop=w='min(iw,ih*{W}/{H})/{z:.3f}':h='min(ih,iw*{H}/{W})/{z:.3f}'"
+              f":x='(iw-ow)/2+({dx:.3f})*(iw-ow)/2':y='(ih-oh)/2+({dy:.3f})*(ih-oh)/2',scale={W}:{H},setsar=1[base]"]
+    atual = "base"
+    if cfg["cobrir"]:  # shortcut: faixa fixa na parte de baixo (posição e altura ajustáveis); sem detecção automática da legenda original
+        y, h = cfg["cobrir_y"], cfg["cobrir_h"]
+        if cfg["cobrir_estilo"] == "borrao":
+            partes.append(f"[{atual}]split[m][b];[b]crop=iw:ih*{h:.3f}:0:ih*{y:.3f},boxblur=12[bb];[m][bb]overlay=0:H*{y:.3f}[c]")
+        else:
+            partes.append(f"[{atual}]drawbox=x=0:y=ih*{y:.3f}:w=iw:h=ih*{h:.3f}:color=0x{cfg['cobrir_cor'][1:]}:t=fill[c]")
+        atual = "c"
+    txt = []
+    max_h = H * (0.2 if cfg["formato"] == "9:16" else 0.13)
+    ty = {"bottom": "h*0.755" if cfg["formato"] == "9:16" else "h*0.84", "center": "(h-text_h)/2", "top": "h*0.06"}[cfg["legenda_pos"]]
+    box = ":box=1:boxcolor=black@0.5:boxborderw=22" if cfg["legenda_caixa"] else ""
+    for i, (a, b, texto) in enumerate(legs):
+        f = Path(tmp) / f"l{i}.txt"
+        cap, fs = fit_caption(texto, W, max_h, round(cfg["legenda_tamanho"] * W / 1080))
+        f.write_text(cap, encoding="utf-8", newline="\n")
+        txt.append(f"drawtext=fontfile='{FONT}':textfile='{f.as_posix().replace(':', chr(92) + ':')}':fontsize={fs}:fontcolor={cfg['legenda_cor']}"
+                   f":x=(w-text_w)/2:y={ty}:line_spacing=12{box}:enable='between(t,{a:.2f},{b:.2f})'")
+    partes.append(f"[{atual}]" + (",".join(txt) if txt else "null") + "[vout]")
+    return ";".join(partes)
+
+
+def _audio(cfg, tem_original, voz):
+    """Som do vídeo final em [aout]: o original (se pedido e existir), a sua voz (se gravada) ou os dois. None se não há som."""
+    manter = cfg["som_original"] == "manter" and tem_original
+    partes = []
+    if manter:
+        partes.append(f"[0:a]aresample=44100,volume={cfg['vol_original']}[oa]")
+    if voz:
+        partes.append(f"[1:a]aresample=44100,volume={cfg['vol_voz']}[va]")
+    if manter and voz:
+        partes.append("[oa][va]amix=inputs=2:duration=longest:normalize=0[aout]")
+    elif manter or voz:
+        partes.append(f"[{'oa' if manter else 'va'}]acopy[aout]")
+    return ";".join(partes) or None
+
+
+def editar(origem, out, cfg, legendas=(), voz=None, quadro=False):
+    """Gera o vídeo final do editor a partir do vídeo baixado (cfg de clean_editor_cfg). Com quadro=True, grava só o JPEG do momento cfg['momento'].
+    legendas: dicts start/end/text em segundos do vídeo original. voz: arquivo da sua gravação, que começa junto com o corte."""
+    if not FFMPEG.exists():
+        raise ValueError("ffmpeg não encontrado; instale pelo onboarding ou defina FFMPEG_PATH")
+    ini, dur = cfg["inicio"], cfg["fim"] - cfg["inicio"]
+    legs = [(max(0.0, s["start"] - ini), min(dur, s["end"] - ini), s["text"].strip()) for s in legendas
+            if cfg["legendas"] and s["end"] > ini and s["start"] < cfg["fim"] and s["text"].strip()]
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory() as tmp:
+        graph = _filtro_imagem(cfg, legs, tmp)
+        cmd = [str(FFMPEG), "-y", "-v", "error", "-ss", f"{ini:.2f}", "-i", str(origem)]
+        if quadro:  # a prévia usa o mesmo filtro, num quadro só (o -ss depois do -i conta a partir do corte)
+            cmd += ["-ss", f"{cfg['momento']:.2f}", "-filter_complex", graph, "-map", "[vout]", "-frames:v", "1", str(out)]
+        else:
+            if voz:
+                cmd += ["-i", str(voz)]
+            audio = _audio(cfg, _tem_audio(origem), voz)
+            if audio:
+                graph += ";" + audio
+            cmd += ["-filter_complex", graph, "-map", "[vout]"] + (["-map", "[aout]", "-c:a", "aac", "-b:a", "192k"] if audio else [])
+            cmd += ["-t", f"{dur:.2f}", "-r", "30", "-pix_fmt", "yuv420p", "-c:v", "libx264", "-crf", str(CRF[cfg["qualidade"]]),
+                    "-movflags", "+faststart", str(out)]
+        r = proc.run(cmd, capture_output=True, text=True, timeout=900)
+    if r.returncode or not out.exists():
+        raise ValueError("o ffmpeg falhou: " + r.stderr[-300:])
+    return out

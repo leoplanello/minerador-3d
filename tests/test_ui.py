@@ -490,3 +490,37 @@ def test_sala_importada_pede_download_e_libera_depois_de_baixar(gui, monkeypatch
         assert "Sala baixada" in page.inner_text("#slimpbox") and page.is_enabled("#slprev") and "12 GB" in page.inner_text("#slimpbox")
         assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
         b.close()
+
+
+def test_editor_do_modelador_gera_previa_e_video_final(gui, tmp_path, monkeypatch):
+    import subprocess
+    import modelador
+    import referencia
+    if not referencia.video.FFMPEG.exists():
+        pytest.skip("ffmpeg ausente")
+    monkeypatch.setattr(referencia, "PASTA", tmp_path / "ref")
+    pasta = referencia.PASTA / "job-editor"
+    pasta.mkdir(parents=True)
+    subprocess.run([str(referencia.video.FFMPEG), "-y", "-v", "error", "-f", "lavfi", "-i", "testsrc=size=1280x720:rate=25:duration=3",
+                    "-f", "lavfi", "-i", "sine=frequency=440:duration=3", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac",
+                    "-shortest", str(pasta / "original.mp4")], check=True)
+    modelador.JOBS["job-editor"] = dict(id="job-editor", status="ok", etapa="pronto", msg="Pronto", video=str(pasta / "original.mp4"),
+                                        duracao=3.0, plataforma="youtube", titulo="Suporte", transcricao="Hi", idioma="en", consultas=[],
+                                        legendas=[dict(start=0.0, end=1.5, text="Oi, este é o suporte.", original="Hi, this is the stand."),
+                                                  dict(start=1.5, end=3.0, text="Ele prende na mesa.", original="It clamps on the desk.")])
+    with playwright.sync_playwright() as p:
+        b = p.chromium.launch(channel="chrome")
+        page = b.new_page(viewport={"width": 1000, "height": 900})
+        page.goto(f"{gui}/#/modelador")
+        page.evaluate("async () => { MOD.id = 'job-editor'; MOD.job = await modGet('job-editor'); modDraw(); }")
+        page.wait_for_selector("#ed-gerar")
+        assert page.locator(".ed-leg").count() == 2 and page.input_value("#ed-fim") == "3.0"
+        page.check("#ed-cobrir")
+        page.click("#ed-previa")
+        page.wait_for_selector("#ed-img:not([hidden])")
+        page.click("#ed-gerar")
+        page.wait_for_selector("text=Baixar vídeo final", timeout=120000)
+        assert (pasta / "final.mp4").is_file()
+        assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
+        b.close()
+    modelador.JOBS.pop("job-editor", None)

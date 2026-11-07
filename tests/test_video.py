@@ -107,3 +107,49 @@ def test_video_com_camera_monta_dos_quadros(tmp_path):
     out = video.make_camera_video(frames, "Primeira frase do roteiro. Segunda frase do roteiro.", tmp_path / "v.mp4", cfg=dict(fps=24, clip_seconds=4))
     info = subprocess.run([str(video.FFPROBE), "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height,nb_frames", "-of", "csv=p=0", str(out)], capture_output=True, text=True).stdout.strip()
     assert info.startswith("1080,1920,12")
+
+
+def _clip(path, audio=True, seconds=3):
+    cmd = [str(video.FFMPEG), "-y", "-v", "error", "-f", "lavfi", "-i", f"testsrc=size=640x360:rate=25:duration={seconds}"]
+    cmd += (["-f", "lavfi", "-i", f"sine=frequency=440:duration={seconds}", "-c:a", "aac"] if audio else [])
+    subprocess.run(cmd + ["-c:v", "libx264", "-pix_fmt", "yuv420p", str(path)], check=True)
+    return path
+
+
+def test_editor_valida_corte_e_opcoes():
+    assert video.clean_editor_cfg({}, 10)["fim"] == 10
+    cfg = video.clean_editor_cfg({"inicio": "1.5", "fim": 4, "zoom": 2, "formato": "1:1", "cobrir": True}, 10)
+    assert (cfg["inicio"], cfg["fim"], cfg["zoom"], cfg["formato"], cfg["cobrir"]) == (1.5, 4.0, 2.0, "1:1", True)
+    assert video.clean_editor_cfg({"fim": 99}, 10)["fim"] == 10  # fim passa da duração: usa a duração
+    for bad in ({"inicio": 5, "fim": 5.5}, {"inicio": 3, "fim": 2}, {"formato": "4:3"}, {"zoom": 0.5}, {"dx": 2},
+                {"som_original": "tudo"}, {"legenda_cor": "red"}, {"cobrir_y": 0.9, "cobrir_h": 0.3}, {"vol_voz": 5}):
+        with pytest.raises(ValueError):
+            video.clean_editor_cfg(bad, 10)
+    with pytest.raises(ValueError):
+        video.clean_editor_cfg({}, 0)  # duração desconhecida
+
+
+@pytest.mark.skipif(not video.FFMPEG.exists(), reason="ffmpeg ausente")
+def test_editor_gera_video_cortado_com_legenda_faixa_e_voz(tmp_path):
+    origem = _clip(tmp_path / "o.mp4")
+    voz = tmp_path / "voz.wav"
+    subprocess.run([str(video.FFMPEG), "-y", "-v", "error", "-f", "lavfi", "-i", "sine=frequency=880:duration=1", str(voz)], check=True)
+    cfg = video.clean_editor_cfg({"inicio": 0.5, "fim": 2.5, "cobrir": True, "cobrir_estilo": "borrao", "som_original": "manter",
+                                  "zoom": 1.5, "dx": -1, "dy": 1}, 3)
+    legs = [dict(start=0.5, end=1.5, text="Oi, este é o suporte."), dict(start=1.5, end=2.5, text="Ele prende na mesa.")]
+    out = video.editar(origem, tmp_path / "final.mp4", cfg, legs, voz=voz)
+    info = subprocess.run([str(video.FFPROBE), "-v", "error", "-show_entries", "stream=codec_type,width,height", "-of", "csv=p=0", str(out)],
+                          capture_output=True, text=True).stdout.split()
+    assert "1080,1920" in info[0] and "audio" in info
+    assert 1.8 < video.duration(out) < 2.2
+
+
+@pytest.mark.skipif(not video.FFMPEG.exists(), reason="ffmpeg ausente")
+def test_editor_sem_som_original_e_sem_voz_e_quadro(tmp_path):
+    origem = _clip(tmp_path / "mudo.mp4", audio=False)
+    cfg = video.clean_editor_cfg({"inicio": 0, "fim": 2, "formato": "16:9", "legendas": False}, 3)
+    out = video.editar(origem, tmp_path / "final.mp4", cfg, [dict(start=0, end=1, text="x")])
+    assert 1.8 < video.duration(out) < 2.2
+    previa = video.editar(origem, tmp_path / "previa.jpg", video.clean_editor_cfg({"momento": 1, "fim": 2}, 3),
+                          [dict(start=0, end=2, text="Legenda de teste")], quadro=True)
+    assert previa.stat().st_size > 500 and previa.read_bytes()[:2] == b"\xff\xd8"  # JPEG
