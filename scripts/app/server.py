@@ -420,8 +420,8 @@ def kit_zip(lid):
         for arc, n in ordem_kit(cand):
             z.write(PRODUCTS / str(lid) / "renders" / n, f"imagens/{arc}")
         z.writestr("LEIA-ME-fotos.txt", leia_me_fotos(cand))
-        if (cena_dir(lid) / "video.mp4").is_file():
-            z.write(cena_dir(lid) / "video.mp4", "video-sala-virtual.mp4")
+        if (PRODUCTS / str(lid) / "kit" / VIDEO_KIT).is_file():  # só o que foi escolhido em "Usar no kit"
+            z.write(PRODUCTS / str(lid) / "kit" / VIDEO_KIT, VIDEO_KIT)
         if (PRODUCTS / str(lid) / "kit" / "video.mp4").is_file():
             z.write(PRODUCTS / str(lid) / "kit" / "video.mp4", "video-anuncio.mp4")
     return buf.getvalue()
@@ -1121,10 +1121,22 @@ def set_created(lid, created):
 
 
 CENA_JOBS = {}  # lid -> andamento da sala virtual (imagem final ou vídeo), só em memória
+VIDEO_KIT = "video-360-sala-virtual.mp4"  # nome do vídeo 360° dentro da pasta kit (o que sobe no anúncio)
 
 
 def cena_dir(lid):
     return PRODUCTS / str(lid) / "cena"
+
+
+def cena_progresso(lid):
+    """Andamento do job: quadros já renderizados (os arquivos que o Blender grava um a um) e o tempo que falta pelo ritmo real."""
+    job = CENA_JOBS.get(lid)
+    if not job or job.get("status") != "running" or "total" not in job:
+        return job
+    feitos = len(list((cena_dir(lid) / "quadros").glob("render_*.jpg")))
+    gasto = time.time() - job["t0"]
+    eta = round(gasto / feitos * (job["total"] - feitos)) if feitos else None
+    return job | dict(feitos=min(feitos, job["total"]), eta_s=eta)
 
 
 def cena_model(lid, cena):
@@ -1214,6 +1226,7 @@ def run_cena(lid, cena, kind, seconds=8, fps=24, engine="EEVEE", qualidade="rapi
                 if qualidade != "normal":  # padrão: renderiza 2/3 do tamanho (720×1280) para caber em minutos; o ffmpeg amplia no arquivo final
                     W, H = W * 2 // 3 // 2 * 2, H * 2 // 3 // 2 * 2
                 n = max(2, round(seconds * fps))
+                job.update(total=n, t0=time.time(), msg="Renderizando os quadros do vídeo…")
                 if usa_blend:
                     frames = renderizar.render_blend_frames(blend, cena_dir(lid) / "quadros", n, engine=engine, res=(W, H))
                 else:
@@ -1544,7 +1557,7 @@ class H(BaseHTTPRequestHandler):
             return self._json(dict(values=get_filters(), labels=selecao.LABELS))
         if path == "/api/cena":
             lid = int(parse_qs(url.query).get("id", ["0"])[0])
-            return self._json(dict(cena=get_setting(f"cena:{lid}") or renderizar.clean_cena({}), job=CENA_JOBS.get(lid), previa=(cena_dir(lid) / "previa.jpg").is_file(), video=(cena_dir(lid) / "video.mp4").is_file(),
+            return self._json(dict(cena=get_setting(f"cena:{lid}") or renderizar.clean_cena({}), job=cena_progresso(lid), previa=(cena_dir(lid) / "previa.jpg").is_file(), video=(cena_dir(lid) / "video.mp4").is_file(),
                                    modelo_enviado=next((f.name for f in sorted(cena_dir(lid).glob("modelo.*"))), None), opcoes={k: list(v) for k, v in renderizar.CENA_CHOICES.items()},
                                    ambientes={"estudio": "Estúdio (fundo liso, mesa curva)"} | {k: v["label"] for k, v in polyhaven.ROOMS.items()} | {m["id"]: m["label"] for m in salas.lista()},
                                    importadas=salas.lista(SALA_DL), creditos=salas.FRASE, sala=sala.estado(lid, cena_dir(lid))))
@@ -1835,6 +1848,22 @@ class H(BaseHTTPRequestHandler):
                     if not itens:
                         raise ValueError("escolha o que adicionar")
                     threading.Thread(target=run_sala, args=(lid, "adicionar", dict(itens=itens)), daemon=True).start()
+            except (ValueError, TypeError, KeyError) as e:
+                return self._json(dict(error=str(e)), 400)
+            return self._json(dict(ok=True))
+        if path in ("/api/cena/usar-kit", "/api/cena/pasta"):  # o vídeo da sala vai para a pasta kit; "Abrir pasta" mostra onde ele está
+            try:
+                lid = int(data["id"])
+                kit = PRODUCTS / str(lid) / "kit"
+                if path.endswith("usar-kit"):
+                    if not (cena_dir(lid) / "video.mp4").is_file():
+                        raise ValueError("gere o vídeo 360° antes")
+                    kit.mkdir(parents=True, exist_ok=True)
+                    shutil.copy(cena_dir(lid) / "video.mp4", kit / VIDEO_KIT)
+                    return self._json(dict(ok=True, arquivo=VIDEO_KIT))
+                d = kit if (kit / VIDEO_KIT).is_file() else cena_dir(lid)
+                d.mkdir(parents=True, exist_ok=True)
+                proc.popen(["explorer", str(d)])
             except (ValueError, TypeError, KeyError) as e:
                 return self._json(dict(error=str(e)), 400)
             return self._json(dict(ok=True))

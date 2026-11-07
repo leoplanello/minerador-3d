@@ -23,25 +23,32 @@ const SALA = {
     const d = this.data, v = d.cena, sel = (k, opts, labels) => `<label class="small">${this.L[k]}<select id="sl_${k}">${opts.map(o => `<option value="${esc(o)}" ${o === v[k] ? 'selected' : ''}>${esc(labels[o] || o)}</option>`).join('')}</select></label>`;
     const maior = c.filtros && c.filtros.stats ? c.filtros.stats.dims[0] : null;
     $('salacard').innerHTML = `<div class="card-h"><h2>Sala virtual</h2><span class="small mut">qualquer modelo, num ambiente de casa de verdade</span></div>
-      <p class="small mut" style="margin:0 0 8px">Escolha o ambiente e onde a peça fica, confira na pré-visualização (alguns segundos) e só então gere a imagem final ou o vídeo. A imagem final vai para as imagens do produto.</p>
+      <p class="small mut" style="margin:0 0 8px">Gere o vídeo de volta completa (9:16, 8 s, em loop). Antes, se quiser, confira a pré-visualização rápida.</p>
       <div class="form">
-        <div class="row">${sel('ambiente', Object.keys(d.ambientes), d.ambientes)}${sel('colocacao', d.opcoes.colocacao, this.V.colocacao)}${sel('referencia', d.opcoes.referencia, this.V.referencia)}</div>
-        <div class="row">${sel('camera', d.opcoes.camera, this.V.camera)}${sel('luz', d.opcoes.luz, this.V.luz)}</div>
-        <div class="row"><label class="small grow">Escala: <b id="sl_escv">${v.escala_pct}%</b>${maior ? ` <span class="mut">(maior lado ${String(Math.round(maior * v.escala_pct / 10) / 10).replace('.', ',')} mm)</span>` : ''}
-            <input id="sl_escala" type="range" min="10" max="500" step="5" value="${v.escala_pct}"></label>
-          <label class="small grow">Giro: <b id="sl_girov">${v.giro}°</b><input id="sl_giro" type="range" min="0" max="355" step="5" value="${v.giro}"></label></div>
-        <div class="row small"><span>Modelo:</span><label class="chk"><input type="radio" name="slmod" value="produto" ${v.modelo !== 'enviado' ? 'checked' : ''}> do produto</label>
-          <label class="chk"><input type="radio" name="slmod" value="enviado" ${v.modelo === 'enviado' ? 'checked' : ''}> um arquivo só para a cena ${d.modelo_enviado ? `(${esc(d.modelo_enviado)})` : ''}</label>
-          <input id="slfile" type="file" accept=".stl,.3mf"></div>
+        <div class="row">${sel('ambiente', Object.keys(d.ambientes), d.ambientes)}${sel('colocacao', d.opcoes.colocacao, this.V.colocacao)}</div>
+        <div class="row"><button id="slvid" class="pri">Gerar vídeo 360°</button><button id="slprev" class="ghost sm">Pré-visualizar (rápido)</button></div>
+        <p id="slest" class="small mut" style="margin:0"></p>
+        <div id="slprogw" class="small" hidden><progress id="slprog" value="0" max="1" style="width:100%"></progress> <span id="slprogt" class="mut"></span></div>
+        <p id="slmsg" class="small" style="margin:0"></p>
+        <div id="slres" class="row" style="align-items:flex-start" ${d.video ? '' : 'hidden'}>
+          <video id="slvideo" controls loop style="max-width:200px;${d.video ? '' : 'display:none'}" ${d.video ? `src="/products/${c.id}/cena/video.mp4?t=${Date.now()}"` : ''}></video>
+          <div class="small"><b>Vídeo 360° pronto</b><div class="row" style="margin-top:6px"><button id="slpasta" class="ghost sm">Abrir pasta</button><button id="slkit" class="pri sm">Usar no kit</button></div></div></div>
+        <div class="row" style="align-items:flex-start"><img id="slimg" alt="Pré-visualização" style="max-width:360px;width:100%;border-radius:8px;${d.previa ? '' : 'display:none'}" src="${d.previa ? `/products/${c.id}/cena/previa.jpg?t=${Date.now()}` : ''}"></div>
+        <details id="slmais" class="small"><summary>Mais opções</summary>
+          <div class="row">${sel('referencia', d.opcoes.referencia, this.V.referencia)}${sel('camera', d.opcoes.camera, this.V.camera)}${sel('luz', d.opcoes.luz, this.V.luz)}</div>
+          <div class="row"><label class="small grow">Escala: <b id="sl_escv">${v.escala_pct}%</b>${maior ? ` <span class="mut">(maior lado ${String(Math.round(maior * v.escala_pct / 10) / 10).replace('.', ',')} mm)</span>` : ''}
+              <input id="sl_escala" type="range" min="10" max="500" step="5" value="${v.escala_pct}"></label>
+            <label class="small grow">Giro: <b id="sl_girov">${v.giro}°</b><input id="sl_giro" type="range" min="0" max="355" step="5" value="${v.giro}"></label></div>
+          <div class="row"><label class="small">Duração do vídeo (s)<input id="slseg" type="number" min="3" max="20" value="8" style="width:64px"></label>
+            <label class="chk small"><input type="checkbox" id="slalta"> Alta qualidade 1080 × 1920 (mais lento)</label>
+            <label class="chk small"><input type="checkbox" id="slcyc"> Cycles (muito lento)</label>
+            <button id="slfinal" class="ghost sm">Gerar imagem final</button></div>
+          <div class="row small"><span>Modelo:</span><label class="chk"><input type="radio" name="slmod" value="produto" ${v.modelo !== 'enviado' ? 'checked' : ''}> do produto</label>
+            <label class="chk"><input type="radio" name="slmod" value="enviado" ${v.modelo === 'enviado' ? 'checked' : ''}> um arquivo só para a cena ${d.modelo_enviado ? `(${esc(d.modelo_enviado)})` : ''}</label>
+            <input id="slfile" type="file" accept=".stl,.3mf"></div>
+        </details>
         <div id="slimpbox" class="small"></div>
         <div id="slblend" class="small" style="border-top:1px solid var(--line);padding-top:10px"></div>
-        <div class="row"><button id="slprev" class="pri sm">Pré-visualizar (rápido)</button><button id="slfinal" class="sm">Gerar imagem final</button>
-          <label class="small">Vídeo (s)<input id="slseg" type="number" min="3" max="20" value="8" style="width:64px"></label>
-          <label class="chk small"><input type="checkbox" id="slalta"> Alta qualidade (mais lento)</label>
-          <label class="chk small"><input type="checkbox" id="slcyc"> Cycles (muito lento)</label><button id="slvid" class="sm">Gerar vídeo em 360°</button></div>
-        <p id="slest" class="small mut" style="margin:0"></p><p id="slmsg" class="small" style="margin:0"></p>
-        <div class="row" style="align-items:flex-start"><img id="slimg" alt="Pré-visualização" style="max-width:360px;width:100%;border-radius:8px;${d.previa ? '' : 'display:none'}" src="${d.previa ? `/products/${c.id}/cena/previa.jpg?t=${Date.now()}` : ''}">
-          <video id="slvideo" controls loop style="max-width:200px;${d.video ? '' : 'display:none'}" ${d.video ? `src="/products/${c.id}/cena/video.mp4?t=${Date.now()}"` : ''}></video></div>
         <p class="small mut" style="margin:6px 0 0">Salas importadas (CGTrader, modelos gratuitos): ${(d.importadas || []).map(m => `“${esc(m.titulo)}” por ${esc(m.autor)} (<a href="${esc(m.pagina)}" target="_blank" rel="noopener">CGTrader</a>)`).join('; ')}. ${esc(d.creditos || '')} Móveis das salas padrão: Poly Haven, CC0.</p></div>`;
     const upd = () => { $('sl_escv').textContent = $('sl_escala').value + '%'; $('sl_girov').textContent = $('sl_giro').value + '°';
       const s = +$('slseg').value || 8, cy = $('slcyc').checked, alta = $('slalta').checked;
@@ -58,6 +65,8 @@ const SALA = {
     $('slprev').onclick = async () => { const r = await run($('slprev'), '/api/cena/previa', {}, 'Pré-visualização pronta.'); if (r) { const im = $('slimg'); im.style.display = ''; im.src = r.url; } };
     $('slfinal').onclick = async () => { const r = await run($('slfinal'), '/api/cena/render', {}, 'Renderizando a imagem final em Cycles (alguns minutos)…'); if (r) this.poll(c); };
     $('slvid').onclick = async () => { const r = await run($('slvid'), '/api/cena/video', {segundos: +$('slseg').value || 8, motor: $('slcyc').checked ? 'cycles' : 'eevee', qualidade: $('slalta').checked ? 'alta' : 'padrao'}, 'Renderizando os quadros do vídeo…'); if (r) this.poll(c); };
+    $('slpasta').onclick = () => post('/api/cena/pasta', {id: c.id});
+    $('slkit').onclick = async () => { const r = await post('/api/cena/usar-kit', {id: c.id}); toast(r.error || `Vídeo guardado na pasta kit: ${r.arquivo}`); };
     $('sl_ambiente').addEventListener('change', () => this.imp(c));
     this.imp(c);
     this.blend(c);
@@ -118,12 +127,20 @@ const SALA = {
     this.imp(c);
     if (s.aberto) { clearTimeout(this.tb); this.tb = setTimeout(() => this.blend(c), 4000); }  // quando o Blender fecha, o estado volta sozinho
   },
+  // andamento real: quadros gravados pelo Blender e o tempo que falta pelo ritmo medido nesta máquina
+  progresso(j) {
+    if (j.kind !== 'video' || !j.total) { $('slmsg').textContent = j.msg; return; }
+    const f = j.feitos || 0, s = j.eta_s, falta = s == null ? 'calculando o tempo…' : s < 90 ? `faltam cerca de ${s} s` : `faltam cerca de ${Math.round(s / 60)} min`;
+    $('slprogw').hidden = false; $('slprog').max = j.total; $('slprog').value = f;
+    $('slprogt').textContent = `${f} de ${j.total} quadros · ${falta}`;
+    $('slmsg').textContent = f >= j.total ? 'Montando o arquivo de vídeo…' : 'Renderizando os quadros do vídeo…';
+  },
   poll(c) {
     clearTimeout(this.t);
     const go = async () => { const d = await (await fetch('/api/cena?id=' + c.id)).json(), j = d.job; if (!$('slmsg')) return;
-      if (j && j.status === 'running') { $('slmsg').textContent = j.msg; this.t = setTimeout(go, 3000); return; }
-      this.blend(c);
-      if (j) { $('slmsg').textContent = j.msg; if (j.status === 'ok') { if (j.kind === 'video') { const v = $('slvideo'); v.style.display = ''; v.src = `/products/${c.id}/cena/video.mp4?t=${Date.now()}`; } load(); } } };
+      if (j && j.status === 'running') { this.progresso(j); this.t = setTimeout(go, 2000); return; }
+      this.blend(c); $('slprogw').hidden = true;
+      if (j) { $('slmsg').textContent = j.msg; if (j.status === 'ok') { if (j.kind === 'video') { const v = $('slvideo'); v.style.display = ''; v.src = `/products/${c.id}/cena/video.mp4?t=${Date.now()}`; $('slres').hidden = false; } load(); } } };
     go();
   },
 };

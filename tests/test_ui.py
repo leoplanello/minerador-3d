@@ -360,8 +360,9 @@ def test_sala_virtual_na_tela_do_produto(gui):
         page.goto(f"{gui}/#/producao/2")
         page.wait_for_selector("#slprev")
         txt = page.inner_text("#salacard")
-        assert "Sala virtual" in txt and "Pré-visualizar" in txt and "Gerar vídeo em 360°" in txt
+        assert "Sala virtual" in txt and "Pré-visualizar" in txt and "Gerar vídeo 360°" in txt
         assert page.locator("#sl_ambiente option").count() == 9 and page.locator("#sl_colocacao option").count() == 4
+        page.click("#slmais > summary")  # escala, luz e duração ficam em "Mais opções"
         page.select_option("#sl_luz", "noite")
         page.fill("#sl_escala", "250")
         assert "250%" in page.inner_text("#sl_escv")

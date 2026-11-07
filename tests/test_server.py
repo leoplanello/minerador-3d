@@ -282,3 +282,19 @@ def test_comparacao_de_identidade_na_busca(tmp_path, monkeypatch):
     monkeypatch.setattr(server.identity, "score_candidates", lambda *a: (_ for _ in ()).throw(ValueError("sem Claude")))
     server.compare_with_ad(7, job)
     assert job["verdict"] is None and "indisponível" in job["notes"][-1]
+
+
+def test_progresso_do_video_conta_quadros_gravados_e_estima_o_resto(tmp_path, monkeypatch):
+    import time
+    monkeypatch.setattr(server, "PRODUCTS", tmp_path)
+    (tmp_path / "5" / "cena" / "quadros").mkdir(parents=True)
+    for i in range(1, 5):
+        (tmp_path / "5" / "cena" / "quadros" / f"render_{i}.jpg").write_bytes(b"x")
+    server.CENA_JOBS[5] = dict(status="running", kind="video", total=20, t0=time.time() - 40)
+    try:
+        j = server.cena_progresso(5)
+        assert j["feitos"] == 4 and 150 <= j["eta_s"] <= 170  # 40 s para 4 quadros: 16 que faltam dão ~160 s
+        server.CENA_JOBS[5]["status"] = "ok"
+        assert "feitos" not in server.cena_progresso(5)  # fora do running, o job volta como estava
+    finally:
+        server.CENA_JOBS.pop(5, None)
