@@ -138,7 +138,7 @@ def scene_for(cfg, title=""):
 
 
 CENA_DEFAULT = dict(ambiente="sala", colocacao="mesa", escala_pct=100, giro=0, referencia="nenhuma", camera="3/4", luz="dia", modelo="produto", limite_s=600)
-CENA_CHOICES = dict(ambiente=tuple(polyhaven.ROOMS) + tuple(salas.SALAS), colocacao=("chao", "mesa", "parede", "prateleira"), referencia=("nenhuma", "moeda", "caneca", "celular"),
+CENA_CHOICES = dict(ambiente=("estudio",) + tuple(polyhaven.ROOMS) + tuple(salas.SALAS), colocacao=("chao", "mesa", "parede", "prateleira"), referencia=("nenhuma", "moeda", "caneca", "celular"),
                     camera=("3/4", "frontal", "close", "orbital"), luz=("dia", "tarde", "noite"), modelo=("produto", "enviado"))
 CENA_VIEW = {"3/4": "cena", "frontal": "cena_frontal", "close": "cena_close", "orbital": "cena"}  # a câmera orbital só se move no vídeo; na imagem vale o 3/4
 
@@ -168,6 +168,8 @@ def clean_cena(d):
 
 def cena_cfg(c):
     """O que o Blender recebe da sala virtual: o ambiente escolhido e os controles; sem o objeto automático (modem, chaves) do produto."""
+    if c["ambiente"] == "estudio":  # fundo liso em tigela, sem móveis: a peça girando ou a câmera dando a volta
+        return dict(cena=c, sala=dict(estudio=True), objeto="", montagem="")
     if c["ambiente"] in salas.SALAS:  # sala 3D importada (GLB/FBX): o Blender importa o arquivo e acha onde pôr a peça
         f = salas.modelo(c["ambiente"])
         if not f:
@@ -184,6 +186,20 @@ def orbit_path(n):
         t = x * x * (3 - 2 * x)
         out.append((-70 + 140 * t, 12 - 4 * t, t))
     return out
+
+
+def giro_modo(cena):
+    """Como a volta completa acontece: 'camera' (estúdio: a câmera dá a volta na peça), 'peca' (sala com mesa ou chão: a peça gira no lugar,
+    a câmera fica parada porque a parede ocupa o outro lado) ou '' (sala com peça na parede ou prateleira: arco de meia volta)."""
+    c = clean_cena(cena)
+    if c["ambiente"] == "estudio":
+        return "camera"
+    return "peca" if c["colocacao"] in ("mesa", "chao") else ""
+
+
+def giro_path(n):
+    """Volta completa de 360°: n ângulos com passo constante e sem repetir o 360, então o último quadro encosta no primeiro (loop sem tranco)."""
+    return [360 * i / n for i in range(n)]
 
 
 def render_cena(model, outdir, cena, preview=False, title=""):
@@ -354,8 +370,15 @@ def render_frames(model, outdir, n, engine="EEVEE", res=(1080, 1920), title="", 
     for old in outdir.glob("render_*.jpg"):
         old.unlink()
     with tempfile.TemporaryDirectory() as tmp:
+        modo = giro_modo(cena) if cena else ""
+        if modo == "camera":  # estúdio: a câmera dá a volta completa na peça
+            views = [("cena_orbital", a, 10, 1.0, 0.0) for a in giro_path(n)]
+        elif modo == "peca":  # sala com mesa ou chão: a câmera fica parada e a peça gira no lugar; o 3/4 da sala é o ângulo fixo
+            views = [("cena_orbital", -34, 12, 1.0, a) for a in giro_path(n)]
+        else:
+            views = [("cena_orbital" if cena else "uso", az, el, 1.0, t) for az, el, t in (orbit_path(n) if cena else camera_path(n))]
         scene_cfg = cfg | dict(polyhaven=str(polyhaven.ROOT) if polyhaven.available() else "", contexto=scene_for(cfg, title), **room_cfg(cfg, title), still_cycles=False, res=list(res),
-                               views=[("cena_orbital" if cena else "uso", az, el, 1.0, t) for az, el, t in (orbit_path(n) if cena else camera_path(n))],
+                               views=views, modo_giro=modo,
                                samples_eevee=QUALITY[cfg["quality"]][0], samples_cycles=QUALITY[cfg["quality"]][1], dist=FILL[cfg["fill"]])
         scene_cfg |= (cena_cfg(clean_cena(cena)) | dict(still_cycles=False)) if cena else {}
         cfgfile = Path(tmp) / "cfg.json"
