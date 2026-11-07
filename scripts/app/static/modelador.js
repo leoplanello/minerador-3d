@@ -252,7 +252,7 @@ function edAtualizar(j) {
   else if (j.final) edMsg('Vídeo final pronto: baixe ou abra a pasta.');
 }
 
-// Depois do vídeo: buscar o modelo 3D (leva ao estúdio e ao cartão do produto) ou enviar o arquivo.
+// Depois do vídeo: buscar o modelo 3D (gera o estúdio do modelo escolhido) ou enviar o arquivo.
 function modDesenharModelo(j) {
   const wrap = $('mod-modelo-wrap'), box = $('mod-modelo');
   if (!wrap) return;
