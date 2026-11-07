@@ -185,10 +185,9 @@ const VIEWS = {
   produto: {
     // o cabeçalho é refeito a cada atualização; o card do modelo é montado uma vez para não apagar o que você digita
     mount: () => `<div id="prod"></div>
+      <nav class="pstepper" id="pstepper" aria-label="Etapas do produto"></nav>
+      <section class="pstep" data-s="modelo">
       <div class="card" id="ovcard" hidden></div>
-      <div class="card" id="selcard" hidden></div>
-      <div class="card" id="salacard" hidden></div>
-      <div class="card" id="tlcard" hidden><div class="card-h"><h2>Linha do tempo</h2><span class="small mut">cada etapa, quando rodou e quanto levou</span></div><div id="tline"></div></div>
       <div class="card" id="mcard" hidden><div class="card-h"><h2>Modelo 3D</h2><span id="mchip" class="chip"></span></div>
         <p id="mstate" class="small mut" style="margin:0 0 12px"></p>
         <div class="msearch"><h3>Achar o modelo nos sites</h3>
@@ -215,6 +214,10 @@ const VIEWS = {
         <div class="row" style="margin-bottom:12px"><label class="small mut">Preço-alvo (R$) <input id="cprice" type="number" step="0.01" min="5" style="height:40px;width:120px;margin-left:6px"></label>
           <button id="cpsave">Salvar preço</button></div>
         <p id="cstate" class="small mut" style="margin:0 0 8px"></p><div class="tablewrap"><table id="ctab"></table></div></div>
+        <details class="card pdetails" id="selwrap"><summary><h2>Detalhes da seleção</h2><span class="small mut">filtros, tese e vendas por dia</span></summary>
+          <div id="selcard" hidden></div></details>
+        <div class="pnext"></div></section>
+      <section class="pstep" data-s="anuncio">
       <div class="card" id="tcard" hidden><div class="card-h"><h2>Texto do anúncio</h2><span id="tchip" class="chip"></span></div>
         <p id="tstate" class="small mut" style="margin:0 0 12px"></p>
         <div class="form">
@@ -226,6 +229,13 @@ const VIEWS = {
           <label>Palavras-chave (separe com vírgula)<input id="tkey"></label>
           <div class="row"><button id="tgen" class="pri">Gerar com Claude</button><button id="tsave">Salvar edições</button></div>
         </div></div>
+      <div class="card" id="kcard" hidden><div class="card-h"><h2>Kit pronto</h2><span id="kchip" class="chip"></span></div>
+        <ul id="kcheck" class="check"></ul>
+        <div class="row" style="margin:12px 0"><div class="seg" role="group" aria-label="Prévia"><button data-pv="ml" aria-pressed="true">Prévia Mercado Livre</button><button data-pv="shopee" aria-pressed="false">Prévia Shopee</button></div>
+          <span class="grow"></span><a id="kzip" class="btn" href="#">Baixar kit (.zip)</a><button id="kok" class="pri">Confirmar kit</button></div>
+        <div id="kprev"></div></div>
+        <div class="pnext"></div></section>
+      <section class="pstep" data-s="midia">
       <div class="card" id="icard" hidden><div class="card-h"><h2>Imagens do anúncio</h2><span id="ichip" class="chip"></span></div>
         <p id="istate" class="small mut" style="margin:0 0 12px"></p>
         <details class="cfg"><summary>Mais opções (cor, fundo, luz, vistas)</summary><div id="icfg" class="cfgform"></div></details>
@@ -233,6 +243,7 @@ const VIEWS = {
           <label class="small mut">Ou envie uma foto sua <input id="ifoto" type="file" accept="image/*"></label><button id="ifup" class="sm">Enviar foto</button></div>
         <p class="small mut" style="margin:0 0 8px">Use as setas para mudar a ordem (a primeira é a foto principal) e Ocultar para tirar uma imagem do anúncio, do kit e do vídeo.</p>
         <div id="igal" class="gallery"></div></div>
+      <div class="card" id="salacard" hidden></div>
       <div class="card" id="vcard" hidden><div class="card-h"><h2>Vídeo</h2><span id="vchip" class="chip"></span></div>
         <p id="vstate" class="small mut" style="margin:0 0 12px"></p>
         <details class="cfg"><summary>Mais opções (formato, legenda, música)</summary><div id="vcfg" class="cfgform"></div></details>
@@ -240,11 +251,8 @@ const VIEWS = {
           <label class="small mut">Música de fundo (opcional) <input id="mfile2" type="file" accept=".wav,.mp3,.m4a,.ogg"></label><button id="mup2" class="sm">Enviar música</button>
           <span class="grow"></span><button id="vgo" class="pri">Gerar vídeo</button></div>
         <div id="vbox" style="margin-top:12px"></div></div>
-      <div class="card" id="kcard" hidden><div class="card-h"><h2>Kit pronto</h2><span id="kchip" class="chip"></span></div>
-        <ul id="kcheck" class="check"></ul>
-        <div class="row" style="margin:12px 0"><div class="seg" role="group" aria-label="Prévia"><button data-pv="ml" aria-pressed="true">Prévia Mercado Livre</button><button data-pv="shopee" aria-pressed="false">Prévia Shopee</button></div>
-          <span class="grow"></span><a id="kzip" class="btn" href="#">Baixar kit (.zip)</a><button id="kok" class="pri">Confirmar kit</button></div>
-        <div id="kprev"></div></div>
+        <div class="pnext"></div></section>
+      <section class="pstep" data-s="publicar">
       <div class="card" id="pcard" hidden><div class="card-h"><h2>Pronto para publicar</h2><span id="pchip" class="chip"></span></div>
         <div class="row" style="margin:0 0 12px"><div class="seg" role="group" aria-label="Marketplace"><button data-mp="ml" aria-pressed="true">Mercado Livre</button><button data-mp="shopee" aria-pressed="false">Shopee</button></div>
           <span class="grow"></span><button id="pcopiatudo" class="pri">Copiar tudo</button></div>
@@ -266,7 +274,9 @@ const VIEWS = {
         </div></div>
       <div class="card" id="shcard" hidden><div class="card-h"><h2>Publicar na Shopee</h2><span id="shchip" class="chip"></span></div>
         <p id="shstate" class="small mut" style="margin:0 0 12px"></p>
-        <div class="row" style="margin-top:12px"><input id="shurl" type="url" placeholder="Link do anúncio na Shopee (opcional)" style="flex:1;height:40px"><button id="shdone">Marquei como publicado</button></div></div>`,
+        <div class="row" style="margin-top:12px"><input id="shurl" type="url" placeholder="Link do anúncio na Shopee (opcional)" style="flex:1;height:40px"><button id="shdone">Marquei como publicado</button></div></div>
+        <div class="pnext"></div></section>
+      <div class="card" id="tlcard" hidden><div class="card-h"><h2>Linha do tempo</h2><span class="small mut">cada etapa, quando rodou e quanto levou</span></div><div id="tline"></div></div>`,
     bind: () => {
       const id = () => +route[1];
       const mlargs = () => ({id: id(), category_id: (document.querySelector('[name=mlcat]:checked') || {}).value,
@@ -369,6 +379,13 @@ const VIEWS = {
            <div class="stepper">${stepper(c, 1)}</div>
            ${(() => { const [t, d, a, k] = nextAction(c); return `<div class="next ${k || ''}"><div class="grow"><b>${esc(t)}</b><div class="small">${esc(d)}</div></div>${a === 'auto' ? `<button class="pri" data-auto="${c.id}">${ic('refresh')}Rodar etapas automáticas</button>` : ''}</div>`; })()}</div>`;
       if (!c) return;
+      const PK = PSTEPS.map(x => x[0]), dn = pstepDone(c), want = PK.includes(route[2]) ? route[2] : PK.find(k => !dn[k]) || 'publicar';
+      $('pstepper').innerHTML = PSTEPS.map(([k, l], i) => `<a href="#/producao/${c.id}/${k}" class="${k === want ? 'cur' : ''}${dn[k] ? ' done' : ''}"${k === want ? ' aria-current="step"' : ''}>
+        <span class="pn">${dn[k] ? '✓' : i + 1}</span>${l}</a>`).join('');
+      document.querySelectorAll('.pstep').forEach(s => { const k = s.dataset.s, cur = k === want; s.hidden = !cur; if (!cur) return;
+        const nx = PK[PK.indexOf(k) + 1], miss = pstepMissing(c, k);
+        s.querySelector('.pnext').innerHTML = (miss ? `<p class="pwarn small">${esc(miss)}</p>` : '')
+          + (nx ? `<a class="btn pri" href="#/producao/${c.id}/${nx}">Próximo passo: ${PSTEPS[PK.indexOf(nx)][1]} →</a>` : ''); });
       $('ovcard').hidden = false; $('ovcard').innerHTML = overview(c);
       SEL.render(c);
       SALA.show(c);
@@ -426,6 +443,7 @@ const VIEWS = {
           if (!$('mlchip')) return;  // saiu da página enquanto a resposta vinha
           $('mlchip').className = 'chip ' + (pub ? 'ok' : m.connected ? 'running' : 'blocked'); $('mlchip').textContent = pub ? 'Publicado' : m.connected ? 'Conta conectada' : m.configured ? 'Falta conectar' : 'Falta configurar';
           $('mlform').hidden = !m.connected || !!pub;
+          $('mlcard').hidden = !m.connected && !pub;  // sem conta conectada, o cartão de publicar pela API some (o Pronto para publicar já cobre)
           $('mlstate').innerHTML = pub ? `Publicado: <a href="${esc(pub.url)}" target="_blank" rel="noopener">${esc(pub.external_id)}</a>` : m.connected ? 'Escolha a categoria, valide e publique. Nada vai ao ar sem o seu segundo clique.'
             : 'A publicação pela API está desligada: não há conta do Mercado Livre conectada. Publique à mão pelo cartão Pronto para publicar.'; });
       }
@@ -578,6 +596,20 @@ function drawPack() {
     + (k.dimensoes ? ` · ${k.dimensoes}` : '');
 }
 
+// quatro passos do produto: cada um mostra só os seus cartões; o passo atual fica no hash (#/producao/ID/passo)
+const PSTEPS = [['modelo', 'Modelo'], ['anuncio', 'Anúncio'], ['midia', 'Mídia'], ['publicar', 'Publicar']];
+function pstepDone(c) {
+  const hasFile = !!(c.model || {}).file_path;
+  return {modelo: hasFile && c.steps.slice === 'ok' && !!c.margin, anuncio: c.steps.copy === 'ok' && c.steps.kit === 'ok',
+    midia: c.steps.images === 'ok', publicar: !!(c.publications.ml || c.publications.shopee)};
+}
+function pstepMissing(c, k) {
+  const hasFile = !!(c.model || {}).file_path, pub = c.publications.ml || c.publications.shopee;
+  if (k === 'modelo') return !hasFile ? 'Falta escolher o modelo 3D.' : c.steps.slice !== 'ok' ? 'Falta fatiar o modelo.' : '';
+  if (k === 'anuncio') return c.steps.copy !== 'ok' ? 'Falta gerar o texto (Gerar com Claude).' : c.steps.kit !== 'ok' ? 'Falta confirmar o kit.' : '';
+  if (k === 'midia') return c.steps.images !== 'ok' ? 'Faltam as imagens (o vídeo é opcional).' : '';
+  return c.steps.kit !== 'ok' ? 'Falta confirmar o kit no passo Anúncio.' : !pub ? 'Ainda não publicado: publique ou marque o link.' : '';
+}
 function overview(c) {
   const m = c.model || {}, mi = m.info || {}, sl = c.slice, M = c.margin, k = c.kit, ms = c.msearch || {};
   const btn = (u, t, chrome) => `<button class="sm ghost" data-open="${esc(u)}" ${chrome ? 'data-chrome="1"' : ''}>${t}</button>`;
@@ -703,6 +735,7 @@ function go() {
   route = (location.hash.replace(/^#\//, '') || 'resumo').split('/');
   if (route[0] === 'revisar') { location.hash = '#/produtos'; return; }
   Tour.clear();  // trocar de tela fecha o balão da tela anterior
+  window.scrollTo(0, 0);  // cada passo ou tela começa do topo
   const name = route[0] === 'producao' && route[1] ? 'produto' : (VIEWS[route[0]] ? route[0] : 'resumo');
   route.view = name;
   document.querySelectorAll('.side a').forEach(a => a.dataset.nav === route[0] ? a.setAttribute('aria-current', 'page') : a.removeAttribute('aria-current'));

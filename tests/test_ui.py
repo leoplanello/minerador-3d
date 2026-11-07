@@ -148,7 +148,7 @@ def test_producao_busca_modelo_imagens_e_configuracao(gui):
     with playwright.sync_playwright() as p:
         b = p.chromium.launch(channel="chrome")
         page = b.new_page(viewport={"width": 1000, "height": 900})
-        page.goto(f"{gui}/#/producao/2")
+        page.goto(f"{gui}/#/producao/2/midia")
         page.wait_for_selector("#igal .gi >> nth=1")
         assert "Passo 1" in page.inner_text(".next")  # sem modelo, o passo é achar o modelo
         assert page.input_value("#msq").startswith("Suporte articulado")
@@ -268,8 +268,8 @@ def test_filtros_na_lista_na_configuracao_e_no_produto(gui):
         page.click("#fsave")
         page.wait_for_timeout(500)
         assert server.get_filters()["max_hours"] == 3
-        page.goto(f"{gui}/#/producao/2")
-        page.wait_for_selector("#selcard:not([hidden])")
+        page.goto(f"{gui}/#/producao/2/modelo")
+        page.evaluate("document.getElementById('selwrap').open = true"); page.wait_for_selector("#selcard:not([hidden])")
         assert "Filtros e vendas por dia" in page.inner_text("#selcard") and "Falta testar" in page.inner_text("#selcard")
         page.fill("#selcreated", "2025-01-01")
         page.click("#selsave")
@@ -305,7 +305,8 @@ def test_foto_real_amostra_e_aviso_no_produto_aprovado(gui):
     with playwright.sync_playwright() as p:
         b = p.chromium.launch(channel="chrome")
         page = b.new_page(viewport={"width": 1280, "height": 800})
-        page.goto(f"{gui}/#/producao/2")
+        page.goto(f"{gui}/#/producao/2/modelo")
+        page.evaluate("document.getElementById('selwrap').open = true")
         page.wait_for_selector(".sel-foto")
         txt = page.inner_text(".sel-foto")
         assert "Imprima uma amostra" in txt and "2 h 0 min" in txt
@@ -317,8 +318,8 @@ def test_foto_real_amostra_e_aviso_no_produto_aprovado(gui):
         page.wait_for_timeout(800)
         am = server.get_setting("amostra:2")
         assert am["impressa"] is True and (am["l"], am["a"], am["p"]) == (60.0, 40.0, 30.0)
-        page.goto(f"{gui}/#/producao/1")  # produto a revisar: sem a seção de foto real
-        page.wait_for_selector("#selcard:not([hidden])")
+        page.goto(f"{gui}/#/producao/1/modelo")  # produto a revisar: sem a seção de foto real
+        page.evaluate("document.getElementById('selwrap').open = true"); page.wait_for_selector("#selcard:not([hidden])")
         assert page.locator(".sel-foto").count() == 0
         b.close()
 
@@ -354,10 +355,10 @@ def test_sala_virtual_na_tela_do_produto(gui):
     with playwright.sync_playwright() as p:
         b = p.chromium.launch(channel="chrome")
         page = b.new_page(viewport={"width": 1280, "height": 800})
-        page.goto(f"{gui}/#/producao/1")  # produto novo: sem sala virtual
-        page.wait_for_selector("#selcard:not([hidden])")
+        page.goto(f"{gui}/#/producao/1/modelo")  # produto novo: sem sala virtual
+        page.evaluate("document.getElementById('selwrap').open = true"); page.wait_for_selector("#selcard:not([hidden])")
         assert page.is_hidden("#salacard")
-        page.goto(f"{gui}/#/producao/2")
+        page.goto(f"{gui}/#/producao/2/midia")
         page.wait_for_selector("#slprev")
         txt = page.inner_text("#salacard")
         assert "Sala virtual" in txt and "Pré-visualizar" in txt and "Gerar vídeo em 360°" in txt
@@ -432,12 +433,12 @@ def test_sala_editavel_no_cartao_da_sala_virtual(gui, monkeypatch, tmp_path):
     with playwright.sync_playwright() as p:
         b = p.chromium.launch(channel="chrome")
         page = b.new_page(viewport={"width": 1280, "height": 800})
-        page.goto(f"{gui}/#/producao/2")
+        page.goto(f"{gui}/#/producao/2/midia")
         page.wait_for_selector("#slmake")
         assert "Montar a sala para editar" in page.inner_text("#slblend") and page.is_enabled("#sl_ambiente")
         estado.update(existe=True, tamanho_mb=9.2, salvo_em="2026-10-28T20:15:00", objetos=[dict(id="peca", tipo="peca"), dict(id="wooden_table_02", tipo="movel")])
-        page.goto(f"{gui}/#/producao/1")
-        page.goto(f"{gui}/#/producao/2")
+        page.goto(f"{gui}/#/producao/1/midia")
+        page.goto(f"{gui}/#/producao/2/midia")
         page.wait_for_selector("#slopen")
         txt = page.inner_text("#slblend")
         assert "Abrir sala no Blender" in txt and "Refazer a sala do zero" in txt and "Ctrl+S" in txt and "wooden_table_02" in txt and "9.2 MB" in txt
@@ -446,8 +447,8 @@ def test_sala_editavel_no_cartao_da_sala_virtual(gui, monkeypatch, tmp_path):
         assert page.is_enabled("#sladd") and page.is_enabled("#slimp")
         assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
         estado.update(aberto=True)
-        page.goto(f"{gui}/#/producao/1")
-        page.goto(f"{gui}/#/producao/2")
+        page.goto(f"{gui}/#/producao/1/midia")
+        page.goto(f"{gui}/#/producao/2/midia")
         page.wait_for_selector("#slopen")
         assert page.is_disabled("#slopen") and page.is_disabled("#sladd") and "salve (Ctrl+S) e feche" in page.inner_text("#slblend")
         b.close()
@@ -475,7 +476,7 @@ def test_sala_importada_pede_download_e_libera_depois_de_baixar(gui, monkeypatch
     with playwright.sync_playwright() as p:
         b = p.chromium.launch(channel="chrome")
         page = b.new_page(viewport={"width": 1280, "height": 800})
-        page.goto(f"{gui}/#/producao/2")
+        page.goto(f"{gui}/#/producao/2/midia")
         page.wait_for_selector("#slprev")
         assert page.locator("#sl_ambiente option").count() == 9 and "Apartamento 3 quartos" in page.inner_text("#sl_ambiente")
         assert "nickadamsss" in page.inner_text("#salacard") and "CGTrader" in page.inner_text("#salacard") and "retirada" in page.inner_text("#salacard")  # créditos sempre na tela
