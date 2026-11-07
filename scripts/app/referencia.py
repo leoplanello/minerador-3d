@@ -3,6 +3,8 @@ troca do áudio pela sua voz gravada (ffmpeg) e busca do modelo 3D que aparece n
 Tudo fica em DATA/referencias/<id>. Nada é publicado; o vídeo original só serve de referência para achar o modelo."""
 import json
 import re
+import shutil
+import sys
 import uuid
 from pathlib import Path
 from urllib.parse import urlparse
@@ -34,6 +36,54 @@ def validar_link(url):
     raise ValueError("aceito só link de Reel do Instagram ou de YouTube Shorts")
 
 
+# YouTube separa vídeo e som: com o ffmpeg a gente junta; sem ffmpeg, pega um arquivo só (nem sempre o YouTube tem um).
+FORMATO_JUNTADO = "bv*[height<=1080][ext=mp4]+ba[ext=m4a]/bv*[height<=1080]+ba/b[height<=1080]/b"
+FORMATO_UNICO = "b[height<=1080]/b"
+YTDLP_EXE = paths.TOOLS / "yt-dlp" / "yt-dlp.exe"  # executável oficial, baixado e atualizado pelo app
+YTDLP_RELEASE = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/"
+LOGIN_RE = re.compile(r"login|sign in|cookies|rate.?limit", re.I)  # o site quer conta: a tela pede o perfil do Chrome
+INDISPONIVEL_RE = re.compile(r"unavailable|private|removed|not available in your country", re.I)  # não adianta atualizar
+
+
+class PrecisaLogin(ValueError):
+    pass
+
+
+def _ytdlp_cmd():
+    """O executável baixado pelo app; no código-fonte, o yt-dlp instalado pelo pip (requirements.txt)."""
+    if YTDLP_EXE.is_file():
+        return [str(YTDLP_EXE)]
+    if not paths.FROZEN:
+        return [sys.executable, "-m", "yt_dlp"]
+    raise ValueError("o yt-dlp ainda não foi baixado: clique em Tentar de novo")
+
+
+def versao_ytdlp():
+    r = proc.run(_ytdlp_cmd() + ["--version"], capture_output=True, text=True, timeout=60)
+    return r.stdout.strip() or "desconhecida"
+
+
+def atualizar_ytdlp():
+    """Baixa o yt-dlp mais novo (executável oficial do GitHub) para tools/yt-dlp, conferindo o SHA-256 publicado na mesma release."""
+    import hashlib
+    import urllib.request
+
+    def ler(nome):
+        req = urllib.request.Request(YTDLP_RELEASE + nome, headers={"User-Agent": "Minerador3D"})
+        with urllib.request.urlopen(req, timeout=120) as r:
+            return r.read()
+    dados = ler("yt-dlp.exe")
+    sumas = ler("SHA2-256SUMS").decode("utf-8", "replace")
+    esperado = next((l.split()[0] for l in sumas.splitlines() if l.split() and l.split()[-1].lstrip("*") == "yt-dlp.exe"), "")
+    if not esperado or hashlib.sha256(dados).hexdigest() != esperado:
+        raise ValueError("o yt-dlp baixado não confere com o SHA-256 da release: não instalei")
+    YTDLP_EXE.parent.mkdir(parents=True, exist_ok=True)
+    novo = YTDLP_EXE.with_suffix(".novo")
+    novo.write_bytes(dados)
+    novo.replace(YTDLP_EXE)
+    return versao_ytdlp()
+
+
 def nova_pasta(url):
     pasta = PASTA / uuid.uuid4().hex[:12]
     pasta.mkdir(parents=True, exist_ok=True)
@@ -41,43 +91,37 @@ def nova_pasta(url):
     return pasta
 
 
-def baixar(url, pasta):
-    """Baixa o vídeo com yt-dlp (até 1080p, um arquivo só, sem ffmpeg) e devolve título, descrição e o caminho do vídeo."""
-    import yt_dlp  # importado aqui: o app abre sem ele e só falha quando alguém pede um link
+def baixar(url, pasta, perfil=None):
+    """Baixa o vídeo com o yt-dlp (até 1080p) e devolve título, descrição e o caminho do vídeo.
+    perfil: pasta do seu Chrome (ex.: 'Default', 'Profile 1') cujos cookies o site pede (Instagram). Só é usado se você escolher."""
     plataforma = validar_link(url)
-    opts = dict(outtmpl=str(pasta / "original.%(ext)s"), format=FORMATO,
-                noplaylist=True, quiet=True, no_warnings=True, max_filesize=300 * 1024 * 1024)
-    with yt_dlp.YoutubeDL(opts) as ydl:
-        info = ydl.extract_info(url, download=True)
-    arquivo = next(pasta.glob("original.*"), None)
-    if arquivo is None:
-        raise ValueError("o vídeo não foi baixado")
-    return dict(plataforma=plataforma, titulo=info.get("title") or "", descricao=info.get("description") or "", video=str(arquivo))
-
-
-FORMATO = "best[ext=mp4][height<=1080]/best[height<=1080]/best"
-YTDLP_EXE = r"$env:LOCALAPPDATA\Minerador3D\tools\yt-dlp\yt-dlp.exe"
+    ffmpeg = video.FFMPEG if video.FFMPEG.is_file() else None
+    args = ["--no-playlist", "--no-warnings", "--write-info-json", "--max-filesize", "300M", "-o", str(pasta / "original.%(ext)s"),
+            "-f", FORMATO_JUNTADO if ffmpeg else FORMATO_UNICO]
+    if ffmpeg:
+        args += ["--merge-output-format", "mp4", "--ffmpeg-location", str(ffmpeg)]
+    if perfil:
+        args += ["--cookies-from-browser", f"chrome:{perfil}"]
+    if shutil.which("node"):
+        args += ["--js-runtimes", "node"]  # ajuda o yt-dlp a resolver os desafios do YouTube
+    r = proc.run(_ytdlp_cmd() + args + ["--", url.strip()], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=1800)
+    arquivo = next((f for f in pasta.glob("original.*") if f.suffix not in (".json", ".part", ".ytdl")), None)
+    if r.returncode != 0 or arquivo is None:
+        erro = " ".join(l for l in (r.stderr or r.stdout or "").splitlines() if l.startswith("ERROR"))[-400:] or "sem detalhes"
+        if LOGIN_RE.search(erro):
+            raise PrecisaLogin("o site pede login")
+        raise ValueError(erro)
+    info = pasta / "original.info.json"
+    dados = json.loads(info.read_text(encoding="utf-8")) if info.is_file() else {}
+    return dict(plataforma=plataforma, titulo=dados.get("title") or "", descricao=dados.get("description") or "", video=str(arquivo))
 
 
 def comando_powershell(url, pasta):
-    """Comando de PowerShell que baixa o vídeo e o texto do post com o yt-dlp. A tela mostra o comando e o app também o executa."""
+    """Comando de PowerShell que baixa o vídeo com o mesmo yt-dlp do app. A tela mostra o comando para você rodar se quiser."""
     validar_link(url)  # a URL vai dentro do comando: só entra o que já passou na validação
-    return (f'& "{YTDLP_EXE}" -f "{FORMATO}" --no-playlist --write-info-json '
-            f'-o "{pasta}\\original.%(ext)s" "{url.strip()}"')
-
-
-def baixar_powershell(url, pasta):
-    """Roda o comando de PowerShell (o mesmo que a tela mostra) e devolve o mesmo dicionário de baixar()."""
-    import json
-    plataforma = validar_link(url)
-    r = proc.run(["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", comando_powershell(url, pasta)],
-                 capture_output=True, text=True, timeout=1800)
-    arquivo = next(pasta.glob("original.*"), None)
-    if r.returncode != 0 or arquivo is None or arquivo.suffix == ".json":
-        raise ValueError("o PowerShell não baixou o vídeo: " + ((r.stderr or r.stdout or "")[-300:]))
-    info = next(pasta.glob("original*.info.json"), None)
-    dados = json.loads(info.read_text(encoding="utf-8")) if info else {}
-    return dict(plataforma=plataforma, titulo=dados.get("title") or "", descricao=dados.get("description") or "", video=str(arquivo))
+    exe = f'"{YTDLP_EXE}"' if YTDLP_EXE.is_file() else "yt-dlp"
+    return (f'& {exe} -f "{FORMATO_JUNTADO}" --merge-output-format mp4 --no-playlist --write-info-json '
+            f'-o "{pasta}\original.%(ext)s" "{url.strip()}"')
 
 
 def duracao(video_path):

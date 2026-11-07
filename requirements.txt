@@ -3,3 +3,4 @@ pywebview>=5.0
 pillow>=10.0
 yt-dlp
 faster-whisper
+av>=13,<16  # faster-whisper 1.2.1 passa metadata_errors ao av; o av 16+ não aceita
