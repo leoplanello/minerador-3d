@@ -11,6 +11,7 @@ import video
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "mine"))
 import model_search  # noqa: E402  (busca de modelos: Printables; MakerWorld e Thingiverse precisam de perfil do Chrome)
+import perfis as perfis_chrome  # noqa: E402  (perfis do seu Chrome, só para escolher o de um site que pede login)
 
 JOBS = {}
 LOCK = threading.Lock()
@@ -31,32 +32,51 @@ def estado(jid):
         return dict(job)
 
 
-def iniciar(url, metodo="python"):
-    """Valida o link na hora (erro na tela) e começa o download e a transcrição em segundo plano.
-    metodo='python' usa o yt-dlp do próprio app; 'powershell' roda o mesmo download pelo comando de PowerShell."""
+def iniciar(url):
+    """Valida o link na hora (erro na tela) e começa o download e a transcrição em segundo plano."""
     referencia.validar_link(url)
     pasta = referencia.nova_pasta(url)
     jid = pasta.name
     with LOCK:
         JOBS[jid] = dict(id=jid, status="running", etapa="baixando", msg="Baixando o vídeo…", url=url,
                          comando=referencia.comando_powershell(url, pasta))
-    threading.Thread(target=_rodar_download, args=(jid, url, pasta, metodo), daemon=True).start()
+    threading.Thread(target=_rodar_download, args=(jid, url, pasta), daemon=True).start()
     return estado(jid)
 
 
-def baixar_de_novo(jid, metodo="powershell"):
-    """Tenta o download de novo (por exemplo pelo PowerShell, quando o do app falha)."""
+def baixar_de_novo(jid, perfil=None):
+    """Tenta o download de novo; perfil = pasta do seu Chrome, quando o site pediu login."""
     job = estado(jid)
     if job.get("status") == "running" and job.get("etapa") == "baixando":
         raise ValueError("o download já está em andamento")
-    _set(jid, status="running", etapa="baixando", msg="Baixando o vídeo…")
-    threading.Thread(target=_rodar_download, args=(jid, job["url"], referencia.PASTA / jid, metodo), daemon=True).start()
+    _set(jid, status="running", etapa="baixando", msg="Baixando o vídeo…", perfis=[])
+    threading.Thread(target=_rodar_download, args=(jid, job["url"], referencia.PASTA / jid, perfil), daemon=True).start()
     return estado(jid)
 
 
-def _rodar_download(jid, url, pasta, metodo="python"):
+def _baixar(url, pasta, perfil):
+    """Baixa; se o yt-dlp falhar por causa do site (não por link fora do ar), atualiza o yt-dlp sozinho e tenta mais uma vez."""
     try:
-        d = referencia.baixar_powershell(url, pasta) if metodo == "powershell" else referencia.baixar(url, pasta)
+        return referencia.baixar(url, pasta, perfil)
+    except referencia.PrecisaLogin:
+        raise
+    except ValueError as erro:
+        if referencia.INDISPONIVEL_RE.search(str(erro)):
+            raise
+        try:
+            referencia.atualizar_ytdlp()
+        except Exception as e:  # sem internet para atualizar: mostra o erro original e o motivo
+            raise ValueError(f"{erro} (não consegui atualizar o yt-dlp: {str(e)[:120]})")
+        return referencia.baixar(url, pasta, perfil)
+
+
+def _rodar_download(jid, url, pasta, perfil=None):
+    try:
+        d = _baixar(url, pasta, perfil)
+    except referencia.PrecisaLogin:
+        _set(jid, status="login", etapa="login", perfis=perfis_chrome.system_profiles(),
+             msg="Este site pede login. Escolha o perfil do Chrome onde você já entrou nele (feche o Chrome antes) e tente de novo.")
+        return
     except Exception as e:  # yt-dlp levanta erros próprios; a tela só precisa da mensagem
         _set(jid, status="error", etapa="erro", msg=f"Não consegui baixar o vídeo: {str(e)[:260]}")
         return
@@ -223,9 +243,9 @@ def caminho_arquivo(jid, nome):
 def rota(path, data):
     """Despacha as rotas JSON /api/referencia/*."""
     if path == "/api/referencia":
-        return iniciar(str(data["url"]), str(data.get("metodo", "python")))
+        return iniciar(str(data["url"]))
     if path == "/api/referencia/baixar-de-novo":
-        return baixar_de_novo(str(data["id"]), str(data.get("metodo", "powershell")))
+        return baixar_de_novo(str(data["id"]), str(data.get("perfil") or "") or None)
     if path == "/api/referencia/editar":
         return editar(str(data["id"]), data.get("cfg") or {}, data.get("legendas") or [])
     if path == "/api/referencia/quadro":

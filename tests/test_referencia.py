@@ -95,7 +95,7 @@ def test_arquivo_do_trabalho_nao_sai_da_pasta(tmp_path, monkeypatch):
 def test_comando_powershell_tem_url_validada_e_pasta(tmp_path):
     url = "https://www.instagram.com/reel/C8xYz12AbCd/"
     cmd = referencia.comando_powershell(url, tmp_path)
-    assert cmd.startswith('& "$env:LOCALAPPDATA\\Minerador3D\\tools\\yt-dlp\\yt-dlp.exe"')
+    assert cmd.startswith("& ") and "bv*[height<=1080]" in cmd
     assert f'"{url}"' in cmd and "--write-info-json" in cmd and "--no-playlist" in cmd
     assert str(tmp_path) in cmd and "original.%(ext)s" in cmd
 
@@ -152,3 +152,93 @@ def test_arquivos_da_previa_e_do_final(tmp_path, monkeypatch):
         modelador.caminho_arquivo("abc", "final")  # ainda não existe
     with pytest.raises(ValueError):
         modelador.caminho_arquivo("abc", "com-sua-voz")  # rota antiga, removida
+
+
+class _Ok:
+    def __init__(self, rc=0, err=""):
+        self.returncode, self.stderr, self.stdout = rc, err, ""
+
+
+def _fake_run(monkeypatch, pasta, rc=0, err="", cmds=None):
+    """Simula o yt-dlp: anota o comando e, quando dá certo, cria o vídeo e o info.json como o yt-dlp faria."""
+    def run(cmd, **kw):
+        if cmds is not None:
+            cmds.append(cmd)
+        if rc == 0:
+            (pasta / "original.mp4").write_bytes(b"v")
+            (pasta / "original.info.json").write_text('{"title": "Suporte", "description": "#impressao3d"}', encoding="utf-8")
+        return _Ok(rc, err)
+    monkeypatch.setattr(referencia.proc, "run", run)
+
+
+def test_baixar_sem_ffmpeg_pede_um_arquivo_so(tmp_path, monkeypatch):
+    cmds = []
+    monkeypatch.setattr(referencia.video, "FFMPEG", tmp_path / "sem-ffmpeg.exe")
+    _fake_run(monkeypatch, tmp_path, cmds=cmds)
+    d = referencia.baixar("https://www.youtube.com/shorts/depshoSFQmU", tmp_path)
+    cmd = cmds[0]
+    assert cmd[cmd.index("-f") + 1] == referencia.FORMATO_UNICO and "--merge-output-format" not in cmd
+    assert d["titulo"] == "Suporte" and d["video"].endswith("original.mp4") and d["plataforma"] == "youtube"
+
+
+def test_baixar_com_ffmpeg_junta_video_e_som(tmp_path, monkeypatch):
+    cmds = []
+    ff = tmp_path / "ffmpeg.exe"
+    ff.write_bytes(b"x")
+    monkeypatch.setattr(referencia.video, "FFMPEG", ff)
+    _fake_run(monkeypatch, tmp_path, cmds=cmds)
+    referencia.baixar("https://www.youtube.com/shorts/depshoSFQmU", tmp_path, perfil="Profile 1")
+    cmd = cmds[0]
+    assert cmd[cmd.index("-f") + 1] == referencia.FORMATO_JUNTADO and "--merge-output-format" in cmd
+    assert cmd[cmd.index("--ffmpeg-location") + 1] == str(ff)
+    assert cmd[cmd.index("--cookies-from-browser") + 1] == "chrome:Profile 1"
+
+
+def test_baixar_avisa_quando_o_site_pede_login(tmp_path, monkeypatch):
+    _fake_run(monkeypatch, tmp_path, rc=1, err="ERROR: [instagram] C8xYz12AbCd: login required")
+    with pytest.raises(referencia.PrecisaLogin):
+        referencia.baixar("https://www.instagram.com/reel/C8xYz12AbCd/", tmp_path)
+
+
+def test_atualizar_ytdlp_recusa_arquivo_que_nao_confere(tmp_path, monkeypatch):
+    import urllib.request
+    monkeypatch.setattr(referencia, "YTDLP_EXE", tmp_path / "yt-dlp" / "yt-dlp.exe")
+
+    class Resp:
+        def __init__(self, dados): self.dados = dados
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def read(self): return self.dados
+
+    def abrir(req, timeout=None):
+        return Resp(b"programa" if req.full_url.endswith("yt-dlp.exe") else b"0" * 64 + b"  yt-dlp.exe\n")
+    monkeypatch.setattr(urllib.request, "urlopen", abrir)
+    with pytest.raises(ValueError, match="SHA-256"):
+        referencia.atualizar_ytdlp()
+    assert not referencia.YTDLP_EXE.exists()
+
+
+def test_modelador_atualiza_o_ytdlp_uma_vez_e_tenta_de_novo(tmp_path, monkeypatch):
+    import modelador
+    chamadas = []
+
+    def baixar(url, pasta, perfil=None):
+        chamadas.append("baixar")
+        if len(chamadas) == 1:
+            raise ValueError("Requested format is not available")
+        return dict(plataforma="youtube", titulo="x", descricao="", video=str(tmp_path / "original.mp4"))
+    monkeypatch.setattr(referencia, "baixar", baixar)
+    monkeypatch.setattr(referencia, "atualizar_ytdlp", lambda: chamadas.append("atualizar") or "2026.10.26")
+    d = modelador._baixar("https://www.youtube.com/shorts/depshoSFQmU", tmp_path, None)
+    assert chamadas == ["baixar", "atualizar", "baixar"] and d["titulo"] == "x"
+
+
+def test_modelador_nao_atualiza_para_video_indisponivel(tmp_path, monkeypatch):
+    import modelador
+
+    def baixar(*a, **k):
+        raise ValueError("Video unavailable")
+    monkeypatch.setattr(referencia, "baixar", baixar)
+    monkeypatch.setattr(referencia, "atualizar_ytdlp", lambda: pytest.fail("não devia atualizar"))
+    with pytest.raises(ValueError, match="unavailable"):
+        modelador._baixar("https://www.youtube.com/shorts/depshoSFQmU", tmp_path, None)
