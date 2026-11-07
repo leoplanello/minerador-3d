@@ -66,23 +66,6 @@ def test_achar_modelo_junta_sem_repetir_e_guarda_avisos():
     assert avisos == ["sem perfil", "Printables fora do ar"]
 
 
-@pytest.mark.skipif(not Path(video.FFMPEG or "").exists(), reason="ffmpeg não instalado")
-def test_troca_o_audio_pela_gravacao(tmp_path):
-    original, voz, saida = tmp_path / "o.mp4", tmp_path / "voz.wav", tmp_path / "novo.mp4"
-    subprocess.run([str(video.FFMPEG), "-v", "error", "-f", "lavfi", "-i", "testsrc=size=160x284:rate=10:duration=1",
-                    "-f", "lavfi", "-i", "sine=frequency=440:duration=1", "-c:v", "libx264", "-c:a", "aac", "-shortest", str(original)], check=True)
-    subprocess.run([str(video.FFMPEG), "-v", "error", "-f", "lavfi", "-i", "sine=frequency=880:duration=1", str(voz)], check=True)
-    assert referencia.trocar_audio(original, voz, saida) == saida
-    assert saida.stat().st_size > 1000
-
-
-def test_trocar_audio_sem_arquivo_de_entrada_falha(tmp_path):
-    if not Path(video.FFMPEG or "").exists():
-        pytest.skip("ffmpeg não instalado")
-    with pytest.raises(ValueError):
-        referencia.trocar_audio(tmp_path / "nao-existe.mp4", tmp_path / "nao-existe.wav", tmp_path / "saida.mp4")
-
-
 def test_baixar_recusa_link_ruim_antes_de_qualquer_download(tmp_path):
     pytest.importorskip("yt_dlp")
     with pytest.raises(ValueError):
@@ -120,3 +103,52 @@ def test_comando_powershell_tem_url_validada_e_pasta(tmp_path):
 def test_comando_powershell_recusa_url_fora_da_lista(tmp_path):
     with pytest.raises(ValueError):
         referencia.comando_powershell('https://evil.com/x";calc', tmp_path)
+
+
+def test_traduzir_devolve_uma_linha_por_fala(monkeypatch):
+    import proc, texto
+    monkeypatch.setattr(texto, "_cmd", lambda: "claude")
+    pedidos = []
+
+    def fake_run(cmd, input=None, **kw):
+        pedidos.append(input)
+        return subprocess.CompletedProcess(cmd, 0, stdout='Aqui: {"legendas": ["Oi.", "Tchau."]}', stderr="")
+
+    monkeypatch.setattr(proc, "run", fake_run)
+    falas = [dict(start=0, end=1, text="Hi."), dict(start=1, end=2, text="Bye.")]
+    assert referencia.traduzir(falas) == ["Oi.", "Tchau."]
+    assert "Hi." in pedidos[0] and "2 itens" in pedidos[0]
+
+
+def test_traduzir_recusa_numero_de_falas_diferente(monkeypatch):
+    import proc, texto
+    monkeypatch.setattr(texto, "_cmd", lambda: "claude")
+    monkeypatch.setattr(proc, "run", lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, stdout='{"legendas": ["so uma"]}', stderr=""))
+    with pytest.raises(ValueError):
+        referencia.traduzir([dict(start=0, end=1, text="a"), dict(start=1, end=2, text="b")])
+
+
+def test_transcrever_guarda_falas_com_tempo(monkeypatch):
+    import types
+    segs = [types.SimpleNamespace(start=0.0, end=1.2, text=" Olá "), types.SimpleNamespace(start=1.2, end=2.0, text="  ")]
+
+    class Modelo:
+        def __init__(self, *a, **kw): pass
+        def transcribe(self, *a, **kw): return iter(segs), types.SimpleNamespace(language="en")
+
+    monkeypatch.setitem(sys.modules, "faster_whisper", types.SimpleNamespace(WhisperModel=Modelo))
+    r = referencia.transcrever("x.mp4")
+    assert r == dict(texto="Olá", idioma="en", segmentos=[dict(start=0.0, end=1.2, text="Olá")])
+
+
+def test_arquivos_da_previa_e_do_final(tmp_path, monkeypatch):
+    import modelador
+    monkeypatch.setattr(referencia, "PASTA", tmp_path)
+    (tmp_path / "abc").mkdir()
+    (tmp_path / "abc" / "previa.jpg").write_bytes(b"j")
+    modelador.JOBS["abc"] = dict(id="abc", status="ok")
+    assert modelador.caminho_arquivo("abc", "previa").name == "previa.jpg"
+    with pytest.raises(ValueError):
+        modelador.caminho_arquivo("abc", "final")  # ainda não existe
+    with pytest.raises(ValueError):
+        modelador.caminho_arquivo("abc", "com-sua-voz")  # rota antiga, removida
