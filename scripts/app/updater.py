@@ -37,16 +37,28 @@ def _host_ok(url):
     return u.scheme == "https" and any(h == d or h.endswith("." + d) for d in ALLOWED_HOSTS)
 
 
+def _get_json(url):
+    return json.load(urllib.request.urlopen(urllib.request.Request(url, headers=UA), timeout=15))
+
+
+def _is_app_release(rel):
+    return bool(re.match(r"v\d", str(rel.get("tag_name", "")))) and any(ASSET_RE.fullmatch(a.get("name", "")) for a in rel.get("assets", []))
+
+
 def check(current=None):
     """Consulta a última release. Devolve dict com current, latest, newer, notes e, se houver, asset_url, sha_url e size."""
     current = current or paths.version()
     try:
-        req = urllib.request.Request(API, headers=UA)
-        rel = json.load(urllib.request.urlopen(req, timeout=15))
+        rel = _get_json(API)
+        if isinstance(rel, list):
+            rel = next((r for r in rel if not r.get("draft")), {})
+        if API.endswith("/latest") and not _is_app_release(rel):  # "latest" pode ser uma release de dados (ex.: salas-1): procura a última versão do app
+            lista = _get_json(API[: -len("/latest")] + "?per_page=20")
+            rel = next((r for r in lista if not r.get("draft") and not r.get("prerelease") and _is_app_release(r)), rel)
     except urllib.error.HTTPError as e:
         if e.code == 404:  # o GitHub responde 404 enquanto não existe nenhuma release
             return dict(current=current, latest="", newer=False, notes="", page_url="")
-        return dict(current=current, error=f"não consegui consultar as atualizações: HTTP {e.code}")
+        return dict(current=current, error=f"não consegui consultar as atualizações: HTTP {e.code}" + (" (limite de consultas do GitHub; tente em alguns minutos)" if e.code == 403 else ""))
     except Exception as e:
         return dict(current=current, error=f"não consegui consultar as atualizações: {e}")
     latest = str(rel.get("tag_name", "")).lstrip("v")
@@ -74,7 +86,8 @@ def download(info, progress=lambda done, total: None, dest_dir=None):
     dest_dir = Path(dest_dir or paths.UPDATES)
     dest_dir.mkdir(parents=True, exist_ok=True)
     dest = dest_dir / info["asset_name"]
-    h, done = hashlib.sha256(), 0
+    import time
+    h, done, t0 = hashlib.sha256(), 0, time.time()
     r = _fetch(info["asset_url"], None)
     total = int(r.headers.get("Content-Length") or info.get("size") or 0)
     with open(dest, "wb") as f:
@@ -83,6 +96,8 @@ def download(info, progress=lambda done, total: None, dest_dir=None):
             h.update(chunk)
             done += len(chunk)
             progress(done, total)
+            if time.time() - t0 > 3600:
+                raise ValueError("o download passou de 1 hora; verifique a conexão e tente de novo")
     if h.hexdigest() != expected:
         dest.unlink(missing_ok=True)
         raise ValueError("o instalador baixado não confere com o SHA-256 da release; não instalei")
@@ -93,5 +108,5 @@ def launch_installer(path):
     """Roda o instalador silencioso (por usuário, sem administrador) pedindo que reabra o app no fim. Quem chama encerra o app logo depois."""
     if not paths.FROZEN:
         raise ValueError("a instalação automática só funciona no app instalado (.exe)")
-    proc.popen([str(path), "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/CLOSEAPPLICATIONS", "/FORCECLOSEAPPLICATIONS", "/RELAUNCH=1"], show=True,
-                     creationflags=proc.DETACHED_PROCESS | proc.CREATE_NEW_PROCESS_GROUP)
+    return proc.popen([str(path), "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/CLOSEAPPLICATIONS", "/FORCECLOSEAPPLICATIONS", "/RELAUNCH=1", f"/LOG={paths.HOME / 'update.log'}"],
+                      show=True, creationflags=proc.DETACHED_PROCESS | proc.CREATE_NEW_PROCESS_GROUP)

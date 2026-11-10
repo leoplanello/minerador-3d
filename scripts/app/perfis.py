@@ -18,7 +18,7 @@ from store_reader import PROFILES_DIR, chrome_path
 CHROME_USER_DATA = Path(os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\User Data"))
 PREFIX = "Minerador 3D - "
 SERVICES = {  # onde abrir a página de login de cada serviço
-    "mercadolivre": ("Mercado Livre", "https://www.mercadolivre.com.br/login"),
+    "mercadolivre": ("Mercado Livre", "https://www.mercadolivre.com.br/"),  # /login dá 404; a pessoa clica em "Entre" na home
     "shopee": ("Shopee", "https://shopee.com.br/buyer/login"),
     "makerworld": ("MakerWorld", "https://makerworld.com/pt/login"),
     "printables": ("Printables", "https://www.printables.com/login"),

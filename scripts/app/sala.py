@@ -79,7 +79,7 @@ def abrir(lid, d, popen=None):
     if not b.is_file():
         raise ValueError("gere a sala primeiro")
     if not renderizar.BLENDER.exists():
-        raise ValueError("Blender não encontrado em tools/blender")
+        raise ValueError(f"Blender não encontrado em {renderizar.TOOLS / 'blender'}. Instale pela faixa de ferramentas no topo do app.")
     if lid in ABERTOS and ABERTOS[lid]["proc"].poll() is None:
         raise ValueError("a sala já está aberta no Blender: salve (Ctrl+S) e feche a janela")
     painel = renderizar.RESOURCES / "scripts" / "app" / "blender_painel.py"  # cria o painel Minerador (tecla N) com a luz fácil e os botões de render

@@ -68,3 +68,36 @@ def test_abrir_chrome_para_login_so_em_sites_conhecidos(monkeypatch):
         with pytest.raises(ValueError):
             sr.open_for_login(perfil, url)
     assert len(chamadas) == 1
+
+
+class FakePage:
+    """Página falsa: `corpos` é a sequência de textos que inner_text devolve; None faz inner_text lançar (página navegando)."""
+    def __init__(self, corpos, url="https://www.mercadolivre.com.br/pagina/x"):
+        self.corpos, self.url, self.gotos = list(corpos), url, []
+
+    def inner_text(self, _sel):
+        c = self.corpos.pop(0) if len(self.corpos) > 1 else self.corpos[0]
+        if c is None:
+            raise RuntimeError("Execution context was destroyed")
+        return c
+
+    def goto(self, url, **kw):
+        self.gotos.append(url)
+
+
+def test_captcha_tipos_e_erro(monkeypatch):
+    import store_reader as sr
+    assert sr._captcha(FakePage(["Insira o código que te enviamos por WhatsApp"])) == "code"
+    assert sr._captcha(FakePage(["oi"], url="https://www.mercadolivre.com/jms/mlb/lgz/login")) == "login"
+    assert sr._captcha(FakePage(["oi"])) == ""
+    assert sr._captcha(FakePage([None])) == "" and sr._captcha(FakePage([None]), on_error=True) == "captcha"
+
+
+def test_espera_do_codigo_nao_navega(monkeypatch):
+    import store_reader as sr
+    monkeypatch.setattr(sr.time, "sleep", lambda s: None)
+    # código na tela, uma leitura que falha no meio da navegação, e depois a página normal
+    pg = FakePage(["Insira o código que te enviamos por WhatsApp"] * 3 + [None] + ["Olá, loja"])
+    eventos = []
+    sr._wait_human(pg, lambda p, kind="captcha": eventos.append((p, kind)))
+    assert pg.gotos == [] and eventos[0] == (True, "code") and eventos[-1][0] is False

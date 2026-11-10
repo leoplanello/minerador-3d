@@ -105,19 +105,53 @@ def extract(zip_path, dest, m):
 
 
 def _download(src, zpath, progress):
+    """Baixa em `zpath`; se a conexão cair, retoma de onde parou (Range) até 5 vezes. Confere o SHA-256 do arquivo inteiro no fim."""
+    import time
     want = expected_sha(src)
-    r = _open_retry(src["url"])
-    total, done, h = int(r.headers.get("Content-Length") or 0), 0, hashlib.sha256()
-    with open(zpath, "wb") as f:
-        while chunk := r.read(1 << 20):
-            f.write(chunk)
-            h.update(chunk)
-            done += len(chunk)
-            progress("baixando", done, total)
+    for i in range(5):
+        have = zpath.stat().st_size if zpath.exists() else 0
+        try:
+            r = _open_retry(src["url"], extra={"Range": f"bytes={have}-"}) if have else _open_retry(src["url"])
+            if have and getattr(r, "status", 200) != 206:  # o servidor ignorou o Range: recomeça
+                have = 0
+            total = have + int(r.headers.get("Content-Length") or 0)
+            done = have
+            with open(zpath, "ab" if have else "wb") as f:
+                while chunk := r.read(1 << 20):
+                    f.write(chunk)
+                    done += len(chunk)
+                    progress("baixando", done, total)
+            break
+        except urllib.error.HTTPError as e:
+            if e.code == 416:  # já estava completo
+                done = total = have
+                break
+            raise  # _open_retry já tentou de novo nos 5xx
+        except OSError:  # queda de rede ou tempo esgotado no meio do arquivo
+            if i == 4:
+                raise
+            time.sleep(2 * (i + 1))
     progress("conferindo", done, total)
+    h = hashlib.sha256()
+    with open(zpath, "rb") as f:
+        while chunk := f.read(1 << 20):
+            h.update(chunk)
     if h.hexdigest() != want:
+        zpath.unlink(missing_ok=True)
         raise ValueError("o arquivo baixado não confere com o SHA-256 do fornecedor; não instalei")
     return done, total
+
+
+def _rename_retry(src, dst):
+    """Antivírus costuma segurar a pasta recém-extraída por alguns segundos: tenta de novo antes de desistir."""
+    import time
+    for i in range(10):
+        try:
+            return src.rename(dst)
+        except PermissionError:
+            if i == 9:
+                raise
+            time.sleep(2)
 
 
 def install(name, progress=lambda stage, done, total: None):
@@ -127,16 +161,17 @@ def install(name, progress=lambda stage, done, total: None):
     m = MANIFEST[name]
     work = paths.TOOLS / "_downloads"
     work.mkdir(parents=True, exist_ok=True)
-    zpath = work / (name + ".zip")
+    if shutil.disk_usage(work).free < m["size_mb"] * 3 * 1024 * 1024:  # zip + arquivos extraídos + folga
+        raise ValueError(f"falta espaço em disco: libere pelo menos {m['size_mb'] * 3} MB e tente de novo")
+    erros = []
     try:
-        erros = []
-        for src in m["sources"]:
+        for k, src in enumerate(m["sources"]):
+            zpath = work / f"{name}.{k}.zip"  # um arquivo parcial por fonte, para retomar sem misturar
             try:
                 done, total = _download(src, zpath, progress)
                 break
             except (OSError, ValueError) as e:  # HTTPError e erros de rede são OSError; SHA errado e host não permitido são ValueError
                 erros.append(f"{urllib.parse.urlparse(src['url']).hostname}: {e}")
-                zpath.unlink(missing_ok=True)
         else:
             raise ValueError("não consegui baixar: " + " | ".join(erros))
         progress("instalando", done, total)
@@ -144,7 +179,8 @@ def install(name, progress=lambda stage, done, total: None):
         shutil.rmtree(tmp, ignore_errors=True)
         extract(zpath, tmp, m)
         shutil.rmtree(final, ignore_errors=True)
-        tmp.rename(final)
+        _rename_retry(tmp, final)
+        for z in work.glob(f"{name}.*.zip"):
+            z.unlink(missing_ok=True)
     finally:
-        zpath.unlink(missing_ok=True)
         shutil.rmtree(paths.TOOLS / (m["dest"] + ".novo"), ignore_errors=True)

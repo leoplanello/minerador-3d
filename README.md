@@ -8,7 +8,7 @@ Baixe o `Minerador3D-Setup-<versão>.exe` na [última release](https://github.co
 
 O app confere sozinho se há versão nova ao abrir e atualiza com um clique. Seus dados ficam em `%LOCALAPPDATA%\Minerador3D\data` e não são tocados na atualização.
 
-Na primeira abertura, um assistente leva você pelos passos: baixar as ferramentas (Bambu Studio, Blender e ffmpeg, direto dos sites oficiais e com conferência de integridade), entrar nas contas pelo Chrome, informar os custos reais e adicionar a primeira loja.
+Na primeira abertura o app baixa sozinho, em segundo plano, o Bambu Studio, o Blender e o ffmpeg (direto dos sites oficiais, com conferência de integridade, retomando se a conexão cair); uma faixa no topo mostra o andamento. Se uma etapa precisar de uma ferramenta que ainda não chegou, ela espera a instalação em vez de falhar. Um assistente leva você pelos demais passos: entrar nas contas pelo Chrome, informar os custos reais e adicionar a primeira loja. O Chrome e o login do Claude precisam ser feitos por você; o app avisa quando faltam.
 
 ## O que o app faz
 

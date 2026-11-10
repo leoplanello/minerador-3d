@@ -48,7 +48,7 @@ def test_adicionar_perfil_abre_o_chrome_na_pagina_de_login_e_marca_pronto_ao_fec
     nome = perfis.add_profile("Loja Teste", "mercadolivre", base=tmp_path, popen=lambda cmd, **kw: chamadas.append((cmd, kw)) or fake, chrome="chrome.exe")
     assert nome == "Minerador 3D - Loja Teste" and (tmp_path / nome).is_dir()
     cmd, kw = chamadas[0]
-    assert cmd[0] == "chrome.exe" and f"--user-data-dir={tmp_path / nome}" in cmd and cmd[-1] == "https://www.mercadolivre.com.br/login" and "--new-window" in cmd
+    assert cmd[0] == "chrome.exe" and f"--user-data-dir={tmp_path / nome}" in cmd and cmd[-1] == "https://www.mercadolivre.com.br/" and "--new-window" in cmd
     assert kw["show"] is True  # a janela do Chrome precisa aparecer
     assert perfis.app_profiles(tmp_path)[0] | {} == dict(nome=nome, apelido="Loja Teste", dedicado=True, login=perfis._open[nome])
     assert perfis._open[nome]["estado"] == "aberto"
