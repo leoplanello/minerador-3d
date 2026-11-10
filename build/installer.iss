@@ -29,7 +29,7 @@ RestartApplications=no
 Name: "ptbr"; MessagesFile: "compiler:Languages\BrazilianPortuguese.isl"
 
 [Tasks]
-Name: "desktopicon"; Description: "Criar atalho na área de trabalho"; Flags: unchecked
+Name: "desktopicon"; Description: "Criar atalho na área de trabalho";
 
 [Files]
 Source: "..\dist\Minerador3D\*"; DestDir: "{app}"; Flags: recursesubdirs ignoreversion

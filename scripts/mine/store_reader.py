@@ -19,6 +19,7 @@ PROFILES_DIR = DATA / "db" / "profiles"
 DEBUG_DIR = DATA / "db" / "debug"
 LINK_RE = re.compile(r"https://(?:produto|www)\.mercadolivre\.com\.br/[^\s?#]*(?:MLBU?-?\d+|/p/MLB\d+)[^\s?#]*")
 CAPTCHA_HINTS = ("captcha", "account-verification", "negative_traffic", "/login", "registration", "/account/signin")  # login conta como ação manual
+CODE_TEXTS = ("insira o código", "código que te enviamos", "código de verificação", "enviamos por whatsapp", "enviamos por sms", "enviamos um código")
 CAPTCHA_TEXTS = ("não sou um robô", "por segurança, complete esta etapa")
 
 
@@ -70,26 +71,41 @@ def extract_links(hrefs):
     return seen
 
 
-def _captcha(page):
-    head = page.inner_text("body")[:2000].lower()
-    return any(h in page.url for h in CAPTCHA_HINTS) or any(t in head for t in CAPTCHA_TEXTS)
+def _captcha(page, on_error=False):
+    """Tipo da pausa manual na página atual ('login', 'code', 'captcha') ou '' se não há. Erro ao ler (página navegando) vale `on_error`."""
+    try:
+        url = page.url
+        head = page.inner_text("body")[:2000].lower()
+    except Exception:
+        return "captcha" if on_error else ""
+    if any(t in head for t in CODE_TEXTS):
+        return "code"
+    if "/login" in url or "registration" in url:
+        return "login"
+    return "captcha" if any(h in url for h in CAPTCHA_HINTS) or any(t in head for t in CAPTCHA_TEXTS) else ""
 
 
 def _wait_human(page, on_captcha):
-    """Pausa até o usuário resolver o captcha na janela aberta (máx. 10 min)."""
-    on_captcha(True, "login" if "/login" in page.url or "registration" in page.url else "captcha")
+    """Pausa até o usuário resolver o captcha, login ou código na janela aberta (máx. 10 min). Não navega nem recarrega nada nesse tempo."""
+    kind = _captcha(page, True) or "captcha"
+    on_captcha(True, kind)
     for _ in range(300):
-        if not _captcha(page):
-            on_captcha(False)
-            return
         time.sleep(2)
+        if not _captcha(page, True):
+            time.sleep(2)  # a página ainda redireciona logo após o código; confirma que assentou
+            if not _captcha(page, True):
+                on_captcha(False)
+                return
     raise TimeoutError("captcha não resolvido em 10 min")
 
 
 def _goto(page, url, on_captcha):
     page.goto(url, wait_until="domcontentloaded", timeout=45000)
+    time.sleep(2)  # redirecionamentos para login ou verificação acontecem depois do domcontentloaded
     if _captcha(page):
         _wait_human(page, on_captcha)
+        if url.split("?")[0] not in page.url:  # depois do login o ML manda para a home: volta ao alvo uma vez
+            page.goto(url, wait_until="domcontentloaded", timeout=45000)
     time.sleep(random.uniform(2, 5))
 
 

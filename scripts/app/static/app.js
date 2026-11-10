@@ -734,7 +734,7 @@ async function pollModel(lid) {
 function go() {
   route = (location.hash.replace(/^#\//, '') || 'resumo').split('/');
   if (route[0] === 'revisar') { location.hash = '#/produtos'; return; }
-  Tour.clear();  // trocar de tela fecha o balão da tela anterior
+  Tour.leave();  // trocar de tela fecha o balão da tela anterior
   window.scrollTo(0, 0);  // cada passo ou tela começa do topo
   const name = route[0] === 'producao' && route[1] ? 'produto' : (VIEWS[route[0]] ? route[0] : 'resumo');
   route.view = name;
@@ -758,8 +758,8 @@ function update() {
   st.lastChild.textContent = needs.length ? 'Precisa de você' : running ? `Lendo loja · ${running.n} anúncios` + (queued ? ` · ${queued} na fila` : '')
     : work.length ? `Trabalhando · ${work[0]}` + (work.length > 1 ? ` (+${work.length - 1})` : '') : 'Parado';
   $('alerts').innerHTML =
-    needs.map(s => `<div class="alert need"><span aria-hidden="true">⚠</span><div><b>${s.msg === 'login' ? 'Faça login no Mercado Livre' : 'Resolva o captcha no Chrome'}</b>
-      Vá até a janela do Chrome aberta pelo app e ${s.msg === 'login' ? 'entre com a sua conta' : 'marque “Não sou um robô” ou conclua a etapa de segurança'}. A leitura de <i>${esc(shortUrl(s.url))}</i> continua sozinha.</div></div>`).join('') +
+    needs.map(s => `<div class="alert need"><span aria-hidden="true">⚠</span><div><b>${s.msg === 'login' ? 'Faça login no Mercado Livre' : s.msg === 'code' ? 'Digite o código de verificação no Chrome' : 'Resolva o captcha no Chrome'}</b>
+      Vá até a janela do Chrome aberta pelo app e ${s.msg === 'login' ? 'entre com a sua conta' : s.msg === 'code' ? 'digite o código que chegou no WhatsApp, SMS ou e-mail (a página não será recarregada)' : 'marque “Não sou um robô” ou conclua a etapa de segurança'}. A leitura de <i>${esc(shortUrl(s.url))}</i> continua sozinha.</div></div>`).join('') +
     (errs.length ? `<div class="alert err"><span aria-hidden="true">✕</span><div class="grow">
       <b>${errs.length === 1 ? '1 loja não foi lida' : errs.length + ' lojas não foram lidas'}</b>
       ${errs.map(s => `<div class="row small" style="margin-top:4px"><span class="grow">${esc(shortUrl(s.url))} · <span class="mut">${esc(errHint(s.msg))}</span></span>
@@ -803,21 +803,31 @@ document.body.addEventListener('click', e => {
   if (d) decide(+d.dataset.decide, d.dataset.st, {approved:'Aprovado: foi para Produção', discarded:'Descartado', new:'Voltou para a revisão'}[d.dataset.st]);
 });
 // ---- atualização automática: confere ao abrir e a cada meia hora; instala só com o seu clique
+const resetRestart = () => { $('restart').disabled = false; $('restart').lastChild.textContent = 'Atualizar'; };
+let wasInstalling = false;
 async function checkUpdate(force) {
-  let u; try { u = await (await fetch('/api/update/check' + (force ? '?force=1' : ''))).json(); } catch (e) { return; }
+  let u; try { u = await (await fetch('/api/update/check' + (force ? '?force=1' : ''))).json(); } catch (e) {
+    if (wasInstalling) return waitRestart();  // o servidor saiu para o instalador trocar o app: espera voltar
+    return;
+  }
   if (u.version && $('ver')) $('ver').textContent = 'versão ' + u.version;
   const bar = $('updatebar'), j = u.job || {};
+  wasInstalling = j.status === 'installing';
   if (j.status === 'running' || j.status === 'installing') {
     const pct = j.total ? Math.round(j.done / j.total * 100) : 0;
-    bar.innerHTML = `<div class="alert upd"><div class="grow"><b>${esc(j.msg)}</b>${j.status === 'running' ? `<div class="bar"><i style="width:${pct}%"></i></div>` : ''}</div></div>`;
+    bar.innerHTML = `<div class="alert upd"><div class="grow"><b>${esc(j.msg)}</b>${j.status === 'running' ? `<div class="bar"><i style="width:${j.total ? pct : 100}%"></i></div>${j.total ? '' : '<span class="small">Baixando…</span>'}` : ''}</div></div>`;
     return setTimeout(() => checkUpdate(), 1000);
   }
+  resetRestart();  // qualquer estado final devolve o botão do topo ao normal
   if (j.status === 'error') bar.innerHTML = `<div class="alert err"><div class="grow"><b>A atualização falhou</b>${esc(j.msg)}</div><button data-updapply>Tentar de novo</button></div>`;
+  else if (u.error) bar.innerHTML = `<div class="alert err"><div class="grow"><b>Não consegui procurar atualizações</b>${esc(u.error)}</div><button data-updretry>Tentar de novo</button></div>`;
   else if (!u.frozen && u.behind > 0) bar.innerHTML = `<div class="alert upd"><div class="grow"><b>${u.behind} ${u.behind > 1 ? 'alterações novas' : 'alteração nova'} no GitHub</b><span class="small">Atualizar baixa tudo, fecha o app e abre de novo.</span></div><button class="pri" data-updapply>Atualizar agora</button></div>`;
+  else if (u.frozen && u.newer && !u.asset_url) bar.innerHTML = `<div class="alert err"><div class="grow"><b>Versão ${esc(u.latest)} disponível, mas sem instalador</b><span class="small">Baixe o instalador em github.com/leoplanello/minerador-3d/releases.</span></div></div>`;
   else if (u.frozen && u.newer) bar.innerHTML = `<div class="alert upd"><div class="grow"><b>Versão ${esc(u.latest)} disponível</b><span class="small">Você está na ${esc(u.current)}.${u.notes ? ' ' + esc(u.notes.split('\n').find(l => l.trim() && !/full changelog/i.test(l)) || '') : ''}</span></div>
       <button class="pri" data-updapply>Atualizar agora</button></div>`;
   else bar.innerHTML = '';
 }
+document.body.addEventListener('click', e => { if (e.target.closest('[data-updretry]')) checkUpdate(true); });
 document.body.addEventListener('click', async e => {
   if (!e.target.closest('[data-updapply]')) return;
   const r = await post('/api/update/apply', {}); if (r.error) return toast(r.error);
@@ -831,12 +841,44 @@ go(); load(); setInterval(load, 3000); Onboarding.init(); checkUpdate(); setInte
 // Atualizar: puxa o que houver de novo (GitHub, ou a release no app instalado) e reinicia; sem novidade, só reinicia
 $('restart').onclick = async () => {
   $('restart').disabled = true; $('restart').lastChild.textContent = 'Atualizando…';
-  const u = await fetch('/api/update/check?force=1').then(r => r.json()).catch(() => ({}));
-  const r = await post(u.frozen ? (u.newer ? '/api/update/apply' : '/api/restart') : (u.behind > 0 ? '/api/update/apply' : '/api/restart'), {}).catch(() => ({}));
-  if (r.error) { $('restart').disabled = false; $('restart').lastChild.textContent = 'Atualizar'; return toast(r.error); }
+  const u = await fetch('/api/update/check?force=1').then(r => r.json()).catch(() => ({error: 'sem resposta do servidor'}));
+  if (u.error) { resetRestart(); return toast(u.error); }  // nunca reinicia achando que atualizou quando a consulta falhou
+  const aplicar = u.frozen ? u.newer : u.behind > 0;
+  const r = await post(aplicar ? '/api/update/apply' : '/api/restart', {}).catch(() => ({error: 'sem resposta do servidor'}));
+  if (r.error) { resetRestart(); return toast(r.error); }
   if (u.frozen && u.newer) return checkUpdate();
   waitRestart();
 };
+
+// faixa de ferramentas: mostra o download automático (Blender, Bambu Studio, ffmpeg) e o que falta no computador
+let toolHealth = {}, toolHealthAt = 0;
+async function drawTools() {
+  let t = [], again = 4000;
+  try {
+    t = await (await fetch('/api/tools')).json();
+    if (Date.now() - toolHealthAt > 30000) { toolHealth = await (await fetch('/api/health')).json(); toolHealthAt = Date.now(); }
+  } catch (e) { return setTimeout(drawTools, again); }
+  const rows = [], run = t.find(x => x.job && x.job.status === 'running');
+  if (run) {
+    const j = run.job, pct = j.total ? Math.round(j.done / j.total * 100) : 0;
+    again = 1000;
+    rows.push(`<div class="alert upd"><div class="grow"><b>Preparando o app: ${esc(run.label)}</b>
+      <span class="small">${j.stage === 'baixando' ? 'Baixando… ' + pct + '%' : j.stage === 'conferindo' ? 'Conferindo a integridade…' : 'Instalando…'} Só na primeira vez; você já pode usar o resto do app.</span>
+      <div class="bar"><i style="width:${pct}%"></i></div></div></div>`);
+  }
+  for (const x of t) if (!x.installed && x.job && x.job.status === 'error') rows.push(`<div class="alert err"><div class="grow"><b>Não consegui instalar ${esc(x.label)}</b>${esc(x.job.msg)}</div><button data-toolretry="${esc(x.name)}">Tentar de novo</button></div>`);
+  if (!run && toolHealthAt) {
+    if (!toolHealth.chrome) rows.push(`<div class="alert need"><div class="grow"><b>Google Chrome não encontrado</b>O app usa o Chrome para ler lojas e sites de modelos.</div><button data-open="https://www.google.com/chrome/">Baixar o Chrome</button></div>`);
+    if (!toolHealth.claude) rows.push(`<div class="alert need"><div class="grow"><b>Claude não está conectado</b>Para escrever o texto dos anúncios: abra um terminal, rode <code>claude</code> e digite <code>/login</code>.</div></div>`);
+  }
+  $('toolbar').innerHTML = rows.join('');
+  setTimeout(drawTools, again);
+}
+document.body.addEventListener('click', async e => {
+  const b = e.target.closest('[data-toolretry]'); if (!b) return;
+  const r = await post('/api/tools/install', {name: b.dataset.toolretry}); if (r.error) toast(r.error); toolHealthAt = 0;
+});
+drawTools();
 
 // links externos: o WebView do app não abre janelas novas, então o app abre no navegador padrão (ou no Chrome do perfil)
 document.body.addEventListener('click', async e => {

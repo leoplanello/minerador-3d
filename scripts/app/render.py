@@ -229,7 +229,7 @@ def gerar_blend(model, blend, cena, title=""):
     """Monta a sala virtual (ambiente, móveis, luz, peça) e a salva como sala.blend: cada móvel é um objeto separado, com 3 câmeras (3/4, frontal, close).
     Texturas e HDRI vão empacotados dentro do arquivo, então ele abre em qualquer pasta. Devolve o caminho."""
     if not BLENDER.exists():
-        raise ValueError("Blender não encontrado em tools/blender")
+        raise ValueError(f"Blender não encontrado em {TOOLS / 'blender'}. Instale pela faixa de ferramentas no topo do app.")
     c = clean_cena(cena)
     if c["ambiente"] not in salas.SALAS and not polyhaven.available():
         raise ValueError("os ativos da sala (Poly Haven) ainda não foram baixados")
@@ -314,7 +314,7 @@ def render_images(model, outdir, cfg=None, title="", cena=None, preview=False):
     """Devolve a lista de JPGs gerados (render_1.jpg...). Tenta EEVEE e cai para Cycles (CPU) se a placa de vídeo não aceitar.
     cfg: dict de clean_render_cfg ou, por compatibilidade, só a cor '#rrggbb'. title: título do anúncio, escolhe o cenário das vistas 'em uso'."""
     if not BLENDER.exists():
-        raise ValueError("Blender não encontrado em tools/blender")
+        raise ValueError(f"Blender não encontrado em {TOOLS / 'blender'}. Instale pela faixa de ferramentas no topo do app.")
     cfg = clean_render_cfg(dict(color=cfg) if isinstance(cfg, str) else cfg)
     outdir.mkdir(parents=True, exist_ok=True)
     for old in outdir.glob("render_*.jpg"):
@@ -365,7 +365,7 @@ def render_frames(model, outdir, n, engine="EEVEE", res=(1080, 1920), title="", 
     """Quadros do vídeo em outdir/render_1.jpg... (câmera em movimento no cenário 'em uso'). engine: 'EEVEE' (rápido) ou 'CYCLES' (demora horas).
     on_time recebe os segundos por quadro medidos, para a estimativa da próxima vez. Devolve os caminhos em ordem."""
     if not BLENDER.exists():
-        raise ValueError("Blender não encontrado em tools/blender")
+        raise ValueError(f"Blender não encontrado em {TOOLS / 'blender'}. Instale pela faixa de ferramentas no topo do app.")
     cfg = clean_render_cfg(dict(cfg or {}, views=["uso"]))
     outdir.mkdir(parents=True, exist_ok=True)
     for old in outdir.glob("render_*.jpg"):

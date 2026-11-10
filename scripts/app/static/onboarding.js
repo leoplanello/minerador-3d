@@ -8,7 +8,10 @@ const Onboarding = {
     else Tour.maybe(route.view);  // o primeiro desenho da tela veio antes de saber se o assistente já foi feito
   },
 
-  save(patch) { Object.assign(this.state, patch); return post('/api/onboarding', patch); },
+  save(patch) {
+    if (patch.tours) patch = {...patch, tours: {...this.state.tours, ...patch.tours}};  // sem isso, fechar um tour esquecia os outros
+    Object.assign(this.state, patch); return post('/api/onboarding', patch);
+  },
 
   async open(step = 0) {
     this.step = step;
@@ -141,7 +144,8 @@ const Tour = {
     this.clear();
     const s = this.steps[this.i], el = document.querySelector(s.sel); if (!el) return this.finish();
     el.scrollIntoView({block: 'center', behavior: 'smooth'});
-    setTimeout(() => {
+    this.timer = setTimeout(() => {
+      if (route.view !== this.name) return;
       const r = el.getBoundingClientRect(), ring = document.createElement('div'), tip = document.createElement('div'), last = this.i === this.steps.length - 1;
       ring.id = 'tour-ring'; ring.style.cssText = `top:${r.top - 6}px;left:${r.left - 6}px;width:${r.width + 12}px;height:${r.height + 12}px`;
       tip.id = 'tour-tip'; tip.innerHTML = `<b>${esc(s.t)}</b><p>${esc(s.x)}</p><div class="row"><span class="small mut grow">${this.i + 1} de ${this.steps.length}</span>
@@ -151,8 +155,10 @@ const Tour = {
       tip.style.cssText = `width:${w}px;left:${left}px;top:${below ? r.bottom + 14 : Math.max(12, r.top - 14 - tip.offsetHeight)}px`;
     }, 350);
   },
-  clear() { document.getElementById('tour-ring')?.remove(); document.getElementById('tour-tip')?.remove(); },
-  finish() { this.clear(); Onboarding.save({tours: {[this.name]: true}}); Onboarding.state.tours[this.name] = true; },
+  clear() { clearTimeout(this.timer); document.getElementById('tour-ring')?.remove(); document.getElementById('tour-tip')?.remove(); },
+  /** Sair da tela ou apertar Esc com o balão aberto conta como visto: o tour não volta sozinho. */
+  leave() { if (document.getElementById('tour-tip')) this.finish(); else this.clear(); },
+  finish() { this.clear(); Onboarding.save({tours: {[this.name]: true}}); },
   next() { this.i + 1 >= this.steps.length ? this.finish() : (this.i++, this.draw()); },
   back() { if (this.i) { this.i--; this.draw(); } },
 };
@@ -173,4 +179,4 @@ document.addEventListener('click', e => {
   if (t.closest('[data-tourback]')) return Tour.back();
   if (t.closest('[data-tourx]')) return Tour.finish();
 });
-document.addEventListener('keydown', e => { if (e.key === 'Escape') { Tour.clear(); } });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') { Tour.leave(); } });

@@ -346,7 +346,7 @@ def test_perfis_do_chrome_na_configuracao(gui, tmp_path, monkeypatch):
         page.select_option("#pfserv", "mercadolivre")
         page.click("#pfadd")
         page.wait_for_timeout(800)
-        assert abertos and abertos[0][-1] == "https://www.mercadolivre.com.br/login" and (tmp_path / "perfis-app" / "Minerador 3D - Pessoal").is_dir()
+        assert abertos and abertos[0][-1] == "https://www.mercadolivre.com.br/" and (tmp_path / "perfis-app" / "Minerador 3D - Pessoal").is_dir()
         assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
         b.close()
 

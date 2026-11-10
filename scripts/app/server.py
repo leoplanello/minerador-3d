@@ -563,6 +563,7 @@ def run_video(lid):
 
     try:
         step("running")
+        ensure_tool("ffmpeg")
         cand = next((c for c in candidates() if c["id"] == lid), None)
         if not cand or not cand["kit"] or not cand["images"]:
             raise ValueError("gere o texto e as imagens antes do vídeo")
@@ -571,6 +572,7 @@ def run_video(lid):
         music = next(iter(sorted(kit.glob("musica.*"))), None)
         cfg, script = video_cfg(), (cand["kit"]["scripts"] or [cand["kit"]["title"]])[0]
         if cfg["motion"] == "camera":
+            ensure_tool("blender")
             est = video_estimate(cfg, voice)
             step("running", f"Renderizando {est['frames']} quadros no Blender ({cfg['engine'].upper()}): cerca de {est['text']}")
             with db() as c:
@@ -604,10 +606,13 @@ def run_images(lid, cfg):
                 m = c.execute("SELECT m.file_path, l.title FROM models m JOIN listings l ON l.id=m.listing_id WHERE m.listing_id=?", (lid,)).fetchone()
             if not m or not m["file_path"]:
                 raise ValueError("envie o modelo 3D antes de gerar as imagens")
+            step("running", "Instalando o Blender (só na primeira vez)…") if not _tool_ok("blender") else None
+            ensure_tool("blender")
+            step("running")
             try:
                 polyhaven.ensure()  # sala com ativos CC0 (uns 12 MB, baixados uma vez); sem rede, o Blender usa o cenário simples
             except Exception:
-                pass
+                step("running", "Sem acesso aos ativos da sala (Poly Haven): as imagens usam o cenário simples.")
             renderizar.render_images(ROOT / m["file_path"], PRODUCTS / str(lid) / "renders", cfg, title=m["title"] or "")
             step("ok")
     except Exception as e:  # erro fica visível no card da GUI
@@ -659,6 +664,9 @@ def run_slice(lid):
                 m = c.execute("SELECT file_path FROM models WHERE listing_id=?", (lid,)).fetchone()
             if not m or not m["file_path"]:
                 raise ValueError("envie o modelo 3D antes de fatiar")
+            if not _tool_ok("bambustudio"):
+                step("running", "Instalando o Bambu Studio (só na primeira vez)…")
+            ensure_tool("bambustudio")
             minutes, grams, out = fatiar.slice_model(ROOT / m["file_path"], PRODUCTS / str(lid) / "slice")
             with lock, db() as c:
                 c.execute("INSERT INTO slices(listing_id,minutes,grams,file_path) VALUES(?,?,?,?) ON CONFLICT(listing_id) DO UPDATE SET"
@@ -919,6 +927,8 @@ def sniff(data):
 MANUAL = {
     "captcha": ("Resolva o captcha no Chrome",
                 "Vá à janela do Chrome aberta pelo app e marque “Não sou um robô” ou conclua a etapa de segurança. A leitura continua sozinha."),
+    "code": ("Digite o código de verificação no Chrome",
+             "Vá à janela do Chrome aberta pelo app e digite o código que o site enviou (WhatsApp, SMS ou e-mail). A leitura continua sozinha, sem recarregar a página."),
     "login": ("Faça login no site aberto",
               "Vá à janela do Chrome aberta pelo app e entre com a sua conta. Para entrar com o Google, feche essa janela e use Configurações > Entrar nas contas."),
 }
@@ -1417,9 +1427,14 @@ def _tool_ok(name):
     return {"bambustudio": fatiar.SLICER.exists(), "blender": renderizar.BLENDER.exists(), "ffmpeg": videos.FFMPEG.exists()}[name]
 
 
-def run_tool_install(name):
+def start_tool_install(name):
+    """Cria o job e instala numa thread. Devolve o job (quem espera consulta job["status"])."""
     job = TOOL_JOBS[name] = dict(status="running", stage="baixando", done=0, total=0, msg="")
+    threading.Thread(target=run_tool_install, args=(name, job), daemon=True).start()
+    return job
 
+
+def run_tool_install(name, job):
     def progress(stage, done, total):
         job.update(stage=stage, done=done, total=total)
 
@@ -1430,6 +1445,29 @@ def run_tool_install(name):
         job.update(status="done", stage="pronto")
     except Exception as e:
         job.update(status="error", msg=str(e)[:300])
+
+
+def ensure_tool(name):
+    """Garante a ferramenta antes de uma etapa: se falta, instala sozinho (ou espera a instalação em curso) em vez de falhar."""
+    import time
+    if _tool_ok(name) or tools_installer.installed(name):
+        return
+    job = TOOL_JOBS.get(name)
+    if not job or job["status"] != "running":
+        job = start_tool_install(name)
+    while job["status"] == "running":
+        time.sleep(2)
+    if job["status"] != "done":
+        raise ValueError(f"não consegui instalar {tools_installer.MANIFEST[name]['label']}: {job['msg']}")
+
+
+def auto_install_tools():
+    """Primeira abertura do app instalado: baixa o que falta, uma ferramenta por vez, sem ninguém precisar clicar."""
+    for name in tools_installer.MANIFEST:
+        try:
+            ensure_tool(name)
+        except Exception:
+            pass  # o erro fica em TOOL_JOBS e aparece na faixa; "Tentar de novo" na faixa
 
 
 def update_check(force=False):
@@ -1448,7 +1486,11 @@ def run_update(info):
     try:
         path = updater.download(info, progress=lambda d, t: UPDATE_JOB.update(done=d, total=t))
         UPDATE_JOB.update(status="installing", msg="Instalando. O app fecha e abre de novo sozinho.")
-        updater.launch_installer(path)
+        p = updater.launch_installer(path)
+        import time
+        time.sleep(3)
+        if p.poll() not in (None, 0):  # o instalador morreu na largada (bloqueio do antivírus, arquivo corrompido): o app continua aberto
+            raise ValueError(f"o instalador não iniciou (código {p.poll()}). Tente de novo ou baixe a versão nova em github.com/leoplanello/minerador-3d/releases")
         threading.Timer(2.0, lambda: os._exit(0)).start()  # dá tempo da tela receber o aviso; o instalador reabre o app
     except Exception as e:
         UPDATE_JOB.update(status="error", msg=str(e)[:300])
@@ -1532,6 +1574,8 @@ class H(BaseHTTPRequestHandler):
             return self._json(update_check(force="force" in parse_qs(url.query)) | dict(job=UPDATE_JOB, version=paths.version()))
         if path == "/api/summary":
             return self._json(summary())
+        if path == "/api/version":
+            return self._json(dict(version=paths.version()))
         if path == "/api/health":
             return self._json(health())
         if path == "/api/onboarding":
@@ -1994,7 +2038,7 @@ class H(BaseHTTPRequestHandler):
                 return self._json(dict(error="ferramenta desconhecida"), 400)
             if any(j.get("status") == "running" for j in TOOL_JOBS.values()):
                 return self._json(dict(error="já tem um download em andamento"), 400)
-            threading.Thread(target=run_tool_install, args=(name,), daemon=True).start()
+            start_tool_install(name)
             return self._json(dict(ok=True))
         if path == "/api/browser":
             put_setting("browser_headless", bool(data.get("headless")))
@@ -2028,6 +2072,7 @@ class H(BaseHTTPRequestHandler):
                 return self._json(dict(error="não há atualização para instalar"), 400)
             if UPDATE_JOB["status"] in ("running", "installing"):
                 return self._json(dict(error="a atualização já está em andamento"), 400)
+            UPDATE_JOB.update(status="running", msg="Baixando a atualização…", done=0, total=0)  # antes da thread: a tela já vê "running" na primeira consulta
             threading.Thread(target=run_update, args=(info,), daemon=True).start()
             return self._json(dict(ok=True))
         if path in ("/api/simulate", "/api/onboarding"):
@@ -2164,6 +2209,8 @@ def make_server(port=paths.PORT):
     """Prepara o banco e devolve o servidor HTTP (sem iniciar). O desktop.py instalado roda isto numa thread."""
     init()
     resume()
+    if paths.FROZEN:  # app instalado: deixa tudo pronto sozinho; do código e nos testes ninguém baixa 1 GB sem pedir
+        threading.Thread(target=auto_install_tools, daemon=True).start()
     return ThreadingHTTPServer(("127.0.0.1", port), H)
 
 

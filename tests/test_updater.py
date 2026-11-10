@@ -225,3 +225,56 @@ def test_atualizar_do_codigo_puxa_do_github(tmp_path, monkeypatch):
     run(origin, "commit", "-qam", "tres")
     with pytest.raises(ValueError, match="puxar"):
         server.git_pull()
+
+
+def test_download_retoma_de_onde_parou(monkeypatch, tmp_path):
+    monkeypatch.setattr(paths, "TOOLS", tmp_path / "tools")
+    monkeypatch.setattr("time.sleep", lambda s: None)
+    corpo = _zip({"ffmpeg-9/bin/ffmpeg.exe": b"f" * 5000, "ffmpeg-9/bin/ffprobe.exe": b"p"})
+    sha = hashlib.sha256(corpo).hexdigest()
+    pedidos = []
+
+    class Parcial(Resp):  # entrega só metade e depois a conexão cai
+        def read(self, n=-1):
+            if getattr(self, "caiu", False):
+                raise ConnectionResetError("caiu")
+            self.caiu = True
+            return corpo[: len(corpo) // 2]
+
+    class Resto(Resp):
+        status = 206
+
+    def abrir(url, extra=None):
+        if url.endswith(".sha256"):
+            return Resp(sha.encode())
+        pedidos.append(extra)
+        return Parcial(corpo) if not extra else Resto(corpo[int(extra["Range"][6:-1]):])
+    monkeypatch.setattr(ti, "_open", abrir)
+    ti.install("ffmpeg")
+    assert ti.installed("ffmpeg") and pedidos[0] is None and pedidos[1] == {"Range": f"bytes={len(corpo) // 2}-"}
+
+
+def test_ensure_tool_instala_sozinho_e_explica_falha(monkeypatch):
+    import server
+    monkeypatch.setattr(server, "_tool_ok", lambda n: False)
+    monkeypatch.setattr(server.tools_installer, "installed", lambda n: False)
+    monkeypatch.setattr(server.tools_installer, "install", lambda n, progress=None: (_ for _ in ()).throw(ValueError("sem rede")))
+    monkeypatch.setattr("time.sleep", lambda s: None)
+    with pytest.raises(ValueError, match="Blender.*sem rede"):
+        server.ensure_tool("blender")
+    monkeypatch.setattr(server.tools_installer, "install", lambda n, progress=None: None)
+    server.ensure_tool("blender")  # a segunda tentativa instala (o erro antigo não trava)
+
+
+def test_check_pula_release_que_nao_e_do_app_e_explica_erro(monkeypatch):
+    import updater
+    app = {"tag_name": "v1.5.0", "assets": [{"name": "Minerador3D-Setup-1.5.0.exe", "browser_download_url": "https://github.com/x/a.exe", "size": 1},
+                                            {"name": "Minerador3D-Setup-1.5.0.exe.sha256", "browser_download_url": "https://github.com/x/a.sha"}]}
+    salas = {"tag_name": "salas-1", "assets": [{"name": "salas.zip"}]}
+    monkeypatch.setattr(updater, "API", "https://api.github.com/repos/x/y/releases/latest")
+    monkeypatch.setattr(updater, "_get_json", lambda url: [salas, app] if "per_page" in url else salas)  # "latest" aponta para a release de dados
+    r = updater.check("1.0.0")
+    assert r["latest"] == "1.5.0" and r["newer"] and r["asset_url"]
+    import urllib.error
+    monkeypatch.setattr(updater, "_get_json", lambda url: (_ for _ in ()).throw(urllib.error.HTTPError(url, 403, "x", {}, None)))
+    assert "limite" in updater.check("1.0.0")["error"]
