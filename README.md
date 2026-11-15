@@ -1,5 +1,7 @@
 # Minerador 3D
 
+Site: https://minerador-3d.leoplanello.com (código em `site/`).
+
 App de desktop para Windows que lê lojas do Mercado Livre, ranqueia os produtos que vendem bem e leva o aprovado até o anúncio: modelo 3D, fatiamento, custo e margem, texto, imagens, vídeo e publicação. Tudo roda no seu computador. Nada é publicado sem um clique seu.
 
 ## Instalar

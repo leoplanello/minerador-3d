@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Minerador 3D · Ache o que vende e publique o anúncio</title>
+<meta name="description" content="App para Windows que lê lojas do Mercado Livre, ranqueia o que vende bem e leva o produto aprovado até o anúncio: modelo 3D, fatiamento, custo e margem, texto, imagens e vídeo. Tudo roda no seu computador.">
+<meta name="color-scheme" content="light">
+<meta name="theme-color" content="#FFE600">
+<link rel="canonical" href="https://minerador-3d.leoplanello.com/">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon.png">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Minerador 3D · Ache o que vende e publique o anúncio">
+<meta property="og:description" content="Do ranking de vendas ao anúncio publicado, num app para Windows que roda no seu computador.">
+<meta property="og:url" content="https://minerador-3d.leoplanello.com/">
+<meta property="og:image" content="https://minerador-3d.leoplanello.com/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css?v=1">
+<script>document.documentElement.classList.add('js')</script>
+<!-- GTM: carrega depois do load + ocioso (ou na primeira interação); as tags ficam no container. -->
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function loadGTM() {
+    if (window.__gtm) return; window.__gtm = 1;
+    var s = document.createElement('script');
+    s.async = true;
+    s.src = 'https://www.googletagmanager.com/gtm.js?id=GTM-5Z52D87H';
+    document.head.appendChild(s);
+    dataLayer.push({ 'gtm.start': Date.now(), event: 'gtm.js' });
+  }
+  addEventListener('load', function () { window.requestIdleCallback ? requestIdleCallback(loadGTM, { timeout: 2000 }) : setTimeout(loadGTM, 2000); });
+  ['scroll', 'pointerdown', 'keydown'].forEach(function (e) { addEventListener(e, loadGTM, { once: true, passive: true }); });
+</script>
+</head>
+<body>
+<a class="skip" href="#conteudo">Pular para o conteúdo</a>
+
+<header class="nav">
+  <a class="brand" href="#topo"><img src="favicon.svg" alt="" width="36" height="36">Minerador 3D</a>
+  <nav aria-label="Principal">
+    <a href="#demo">Ver funcionando</a>
+    <a href="#recursos">O que faz</a>
+    <a href="#baixar">Baixar</a>
+    <a href="#duvidas">Dúvidas</a>
+  </nav>
+  <a class="btn btn-dark" href="https://github.com/leoplanello/minerador-3d/releases/latest" data-dl>Baixar grátis</a>
+</header>
+
+<main id="conteudo">
+<section class="hero" id="topo">
+  <h1 class="rise">Ache o que vende. Publique o anúncio.</h1>
+  <div class="hero-row rise" style="--d:1">
+    <p class="lead">O Minerador 3D lê lojas do Mercado Livre, ranqueia o que vende bem e leva o produto que você aprovar até o anúncio: modelo 3D, fatiamento, custo e margem, texto, imagens e vídeo. Tudo roda no seu Windows.</p>
+    <div class="hero-cta">
+      <a class="btn btn-big btn-blue" href="https://github.com/leoplanello/minerador-3d/releases/latest" data-dl>Baixar para Windows</a>
+      <a class="btn btn-big btn-ghost" href="#demo">Ver funcionando</a>
+    </div>
+  </div>
+</section>
+
+<section class="demo" id="demo" aria-labelledby="demo-h">
+  <h2 id="demo-h" class="rise">Cinco passos, um app só.</h2>
+  <div class="steps" role="tablist" aria-label="Passos da demonstração">
+    <button role="tab" aria-selected="true" data-go="0"><b>Lojas</b><span>Lê os mais vendidos</span><i></i></button>
+    <button role="tab" aria-selected="false" data-go="1"><b>Ranking</b><span>Você aprova o produto</span><i></i></button>
+    <button role="tab" aria-selected="false" data-go="2"><b>Modelo e custo</b><span>Fatia e calcula a margem</span><i></i></button>
+    <button role="tab" aria-selected="false" data-go="3"><b>Imagens e vídeo</b><span>Estúdio, sala e 360°</span><i></i></button>
+    <button role="tab" aria-selected="false" data-go="4"><b>Publicar</b><span>Só com o seu clique</span><i></i></button>
+  </div>
+
+  <div class="win" id="win" role="group" aria-label="Demonstração animada do aplicativo, com dados de exemplo">
+    <div class="win-bar">
+      <span class="win-brand"><img src="favicon.svg" alt="" width="26" height="26">Minerador 3D</span>
+      <span class="win-search" id="w-search">Buscar produto ou loja</span>
+      <span class="win-status" id="w-status"><i></i><em>Parado</em></span>
+    </div>
+    <div class="win-body">
+      <ul class="win-side" aria-hidden="true">
+        <li data-n="0">Lojas</li><li data-n="1">Produtos</li><li data-n="2">Produção</li><li data-n="3">Imagens</li><li data-n="4">Publicar</li>
+      </ul>
+
+      <div class="scene on" data-s="0">
+        <p class="sc-title">Adicionar loja</p>
+        <div class="field"><span class="typed">mercadolivre.com.br/pagina/loja-exemplo</span><span class="go">Ler loja</span></div>
+        <p class="sc-note"><span id="cnt">0</span> de 63 anúncios lidos</p>
+        <div class="bar"><span class="fill read"></span></div>
+        <ul class="lines">
+          <li style="--i:0"><span class="th"></span><span>Suporte de parede para fone de ouvido</span><em>+1.000 vendidos</em></li>
+          <li style="--i:1"><span class="th"></span><span>Porta-chaves de parede com porta-treco</span><em>+500 vendidos</em></li>
+          <li style="--i:2"><span class="th"></span><span>Organizador de mesa para cabos</span><em>+500 vendidos</em></li>
+          <li style="--i:3"><span class="th"></span><span>Suporte vertical para roteador</span><em>+250 vendidos</em></li>
+        </ul>
+      </div>
+
+      <div class="scene" data-s="1">
+        <p class="sc-title">Produtos <em>a revisar</em></p>
+        <ul class="rank">
+          <li style="--i:0" class="pick"><span class="th"></span><span class="nm">Suporte de parede para fone de ouvido<small>R$ 27 · +1.000 vendidos · cresce rápido</small></span><span class="sc"><b>89,6</b><u style="--w:89.6%"></u></span><span class="act"><i class="a1">Aprovar</i><i class="a2">Aprovado</i></span></li>
+          <li style="--i:1"><span class="th"></span><span class="nm">Porta-chaves de parede com porta-treco<small>R$ 44 · +500 vendidos</small></span><span class="sc"><b>88,1</b><u style="--w:88.1%"></u></span><span class="act"><i class="a1">Aprovar</i></span></li>
+          <li style="--i:2"><span class="th"></span><span class="nm">Organizador de mesa para cabos<small>R$ 25 · +500 vendidos</small></span><span class="sc"><b>87,6</b><u style="--w:87.6%"></u></span><span class="act"><i class="a1">Aprovar</i></span></li>
+          <li style="--i:3"><span class="th"></span><span class="nm">Suporte vertical para roteador<small>R$ 31 · +250 vendidos</small></span><span class="sc"><b>85,2</b><u style="--w:85.2%"></u></span><span class="act"><i class="a1">Aprovar</i></span></li>
+        </ul>
+      </div>
+
+      <div class="scene" data-s="2">
+        <div class="two">
+          <div>
+            <p class="sc-title">Modelo 3D</p>
+            <ul class="checks">
+              <li style="--i:0"><span class="ck"></span>Achado no Printables</li>
+              <li style="--i:1"><span class="ck"></span>Licença CC-BY: uso comercial permitido</li>
+              <li style="--i:2"><span class="ck"></span>Perfil Bambu Lab A1</li>
+            </ul>
+            <p class="sc-note">Fatiando no Bambu Studio</p>
+            <div class="bar"><span class="fill slice"></span></div>
+            <p class="slice-out">4 h 08 min · 62 g de filamento</p>
+          </div>
+          <div>
+            <p class="sc-title">Custo e margem</p>
+            <table class="cost">
+              <tr style="--i:0"><td>Filamento</td><td>R$ 7,44</td></tr>
+              <tr style="--i:1"><td>Energia</td><td>R$ 0,47</td></tr>
+              <tr style="--i:2"><td>Desgaste da máquina</td><td>R$ 6,20</td></tr>
+              <tr style="--i:3"><td>Embalagem</td><td>R$ 2,50</td></tr>
+              <tr style="--i:4" class="tot"><td>Custo da peça</td><td>R$ 16,61</td></tr>
+              <tr style="--i:5"><td>Preço no anúncio</td><td>R$ 39,90</td></tr>
+              <tr style="--i:6" class="ok"><td>Sobra, antes das tarifas</td><td>R$ 23,29</td></tr>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div class="scene" data-s="3">
+        <p class="sc-title">Imagens e vídeo de 8 segundos</p>
+        <div class="shots">
+          <figure style="--i:0"><div class="shot studio"><svg class="prism" viewBox="0 0 64 64"><use href="#prism"/></svg></div><figcaption>Estúdio, fundo branco</figcaption></figure>
+          <figure style="--i:1"><div class="shot room"><i class="shelf"></i><svg class="prism" viewBox="0 0 64 64"><use href="#prism"/></svg></div><figcaption>Em uso, na parede</figcaption></figure>
+          <figure style="--i:2"><div class="shot studio spin"><svg class="prism" viewBox="0 0 64 64"><use href="#prism"/></svg></div><figcaption>Vídeo com volta de 360°</figcaption></figure>
+        </div>
+        <div class="bar thin"><span class="fill video"></span></div>
+        <p class="sc-note">Quadro 96 de 192 · fecha em loop</p>
+      </div>
+
+      <div class="scene" data-s="4">
+        <p class="sc-title">Conferir antes de publicar</p>
+        <ul class="checks big">
+          <li style="--i:0"><span class="ck"></span>Título e descrição escritos com o Claude</li>
+          <li style="--i:1"><span class="ck"></span>8 imagens e 1 vídeo</li>
+          <li style="--i:2"><span class="ck"></span>Preço e margem conferidos</li>
+          <li style="--i:3"><span class="ck"></span>Licença do modelo registrada</li>
+        </ul>
+        <div class="pub"><span class="p1">Publicar no Mercado Livre</span><span class="p2">Publicado</span></div>
+        <p class="sc-note">Nada vai ao ar sem o seu clique.</p>
+      </div>
+    </div>
+  </div>
+  <p class="fine">Demonstração com dados de exemplo.</p>
+  <button class="pause" id="pause" type="button" aria-pressed="false">Pausar a demonstração</button>
+</section>
+
+<section class="feat" id="recursos" aria-labelledby="rec-h">
+  <h2 id="rec-h" class="rise">Do ranking ao anúncio, sem trocar de programa.</h2>
+  <div class="feat-grid">
+    <article class="rise"><h3>Lê as lojas por você</h3><p>Abre o Chrome com o seu login, lê os anúncios mais vendidos de cada loja, um por vez, e para no captcha ou no login para você resolver.</p></article>
+    <article class="rise" style="--d:1"><h3>Ranking que explica a nota</h3><p>Ordena por vendas, avaliações, crescimento e preço. Mostra vendas por dia pela idade do anúncio, em lista ou grade. Você aprova ou descarta.</p></article>
+    <article class="rise" style="--d:2"><h3>Modelo com a licença à vista</h3><p>Busca no Printables, MakerWorld e Thingiverse e mostra a licença de cada modelo antes de você escolher.</p></article>
+    <article class="rise" style="--d:3"><h3>Fatia e calcula</h3><p>Fatia no Bambu Studio com o perfil da A1 e fecha custo e margem com o seu filamento, a sua energia e o seu tempo de máquina.</p></article>
+    <article class="rise" style="--d:4"><h3>Texto, imagens e vídeo</h3><p>O Claude escreve o anúncio. O Blender faz foto de estúdio e cenas em uso. O ffmpeg monta o vídeo de 8 segundos com volta de 360°.</p></article>
+    <article class="rise" style="--d:5"><h3>Filtros do que você aceita imprimir</h3><p>Tamanho da peça, tempo máximo, fragilidade, suporte, cores, montagem e estoque de filamento. O que não passa nem entra na fila.</p></article>
+  </div>
+</section>
+
+<section class="control" aria-labelledby="ctl-h">
+  <h2 id="ctl-h" class="rise">Nada sai do seu computador sem um clique seu.</h2>
+  <div class="control-row">
+    <p class="rise">Lojas, produtos, custos e imagens ficam no seu computador, na pasta do aplicativo. A atualização troca o programa e não mexe nos seus dados.</p>
+    <p class="rise" style="--d:1">Mercado Livre pela API oficial. Na Shopee o app prepara o kit e você cadastra pela Central do Vendedor, porque a Shopee bloqueia navegador controlado por programa.</p>
+  </div>
+</section>
+
+<section class="dl" id="baixar" aria-labelledby="dl-h">
+  <h2 id="dl-h" class="rise">Baixe e rode em cinco minutos.</h2>
+  <div class="dl-row">
+    <ol class="rise">
+      <li><b>Baixe o instalador</b> na última versão e execute. É por usuário e não pede administrador.</li>
+      <li><b>Deixe o app preparar</b> o Bambu Studio, o Blender e o ffmpeg. Ele baixa sozinho, em segundo plano.</li>
+      <li><b>Siga o assistente</b>: entre nas contas pelo Chrome, informe seus custos e adicione a primeira loja.</li>
+    </ol>
+    <div class="dl-box rise" style="--d:1">
+      <a class="btn btn-big btn-dark" href="https://github.com/leoplanello/minerador-3d/releases/latest" data-dl>Baixar o instalador</a>
+      <p>Grátis. Windows 10 ou 11. O Windows pode mostrar um aviso do SmartScreen, porque o instalador não tem assinatura digital: clique em “Mais informações” e depois em “Executar assim mesmo”.</p>
+    </div>
+  </div>
+</section>
+
+<section class="faq" id="duvidas" aria-labelledby="faq-h">
+  <h2 id="faq-h" class="rise">Dúvidas comuns.</h2>
+  <div class="faq-list">
+    <details><summary>Preciso pagar alguma coisa?</summary><p>O app é grátis. O texto dos anúncios usa o seu login do Claude, então vale o seu plano nele. As outras ferramentas (Bambu Studio, Blender, ffmpeg) são gratuitas.</p></details>
+    <details><summary>Preciso ter uma impressora?</summary><p>O perfil de fatiamento é o da Bambu Lab A1. Sem impressora você ainda lê lojas, ranqueia e simula custo e margem, mas a produção real pede a máquina.</p></details>
+    <details><summary>O app publica sozinho?</summary><p>Não. Publicar é sempre um clique seu, depois de conferir texto, imagens, vídeo, preço e margem.</p></details>
+    <details><summary>O que eu preciso fazer eu mesmo?</summary><p>Entrar nas contas pelo Chrome, informar seus custos reais, rodar <code>/login</code> do Claude uma vez, criar o app do Mercado Livre em developers.mercadolivre.com.br e, se quiser narração, gravar a voz do roteiro. Sem áudio o vídeo sai mudo, só com legenda.</p></details>
+    <details><summary>Como recebo atualizações?</summary><p>O app confere se há versão nova ao abrir e atualiza com um clique, conferindo a integridade do arquivo antes de instalar.</p></details>
+    <details><summary>Funciona em Mac ou Linux?</summary><p>Por enquanto só Windows.</p></details>
+  </div>
+</section>
+</main>
+
+<footer class="foot">
+  <p class="big-name">Minerador 3D</p>
+  <div class="foot-row">
+    <p>Feito por Leonardo Planello.</p>
+    <p><a href="https://github.com/leoplanello/minerador-3d">Código no GitHub</a> · <a href="https://github.com/leoplanello/minerador-3d/releases/latest">Versões</a> · <a href="https://leoplanello.com">leoplanello.com</a></p>
+  </div>
+</footer>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <g id="prism">
+      <path d="M32 6 54 19v26L32 58 10 45V19z" fill="#3483FA"/>
+      <path d="M32 6 54 19 32 32 10 19z" fill="#6aa5ff"/>
+      <path d="M32 32v26L10 45V19z" fill="#2968C8"/>
+    </g>
+  </defs>
+</svg>
+<script src="demo.js?v=1"></script>
+</body>
+</html>
