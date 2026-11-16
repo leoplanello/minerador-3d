@@ -5,7 +5,7 @@
   var status = document.getElementById('w-status'), search = document.getElementById('w-search'), cnt = document.getElementById('cnt');
   var pauseBtn = document.getElementById('pause'), demo = document.getElementById('demo');
   var reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
-  var STATE = [['work', 'Lendo loja…', 'Buscar produto ou loja'], ['', 'Parado', 'suporte parede'], ['work', 'Fatiando…', 'Buscar produto ou loja'], ['work', 'Renderizando…', 'Buscar produto ou loja'], ['ok', 'Pronto para publicar', 'Buscar produto ou loja']];
+  var STATE = [['work', 'Lendo loja…', 'Buscar produto ou loja'], ['', 'Parado', 'suporte parede'], ['work', 'Fatiando…', 'Buscar produto ou loja'], ['work', 'Renderizando…', 'Buscar produto ou loja'], ['ok', 'Pronto', 'Buscar produto ou loja']];
   var cur = 0, timer, raf, paused = false, visible = false;
   demo.style.setProperty('--dur', DUR + 'ms');
 
@@ -19,9 +19,12 @@
   }
   function go(i) {
     cur = (i + scenes.length) % scenes.length;
-    scenes.forEach(function (s, n) { s.classList.toggle('on', n === cur); });
-    side.forEach(function (s, n) { s.classList.toggle('on', n === [0, 1, 2, 3, 4][cur]); });
-    steps.forEach(function (b, n) { b.setAttribute('aria-selected', n === cur); });
+    // tira tudo, força o reflow e põe de volta: as animações CSS da cena e da ficha recomeçam do zero
+    scenes.forEach(function (s) { s.classList.remove('on'); });
+    steps.forEach(function (b) { b.setAttribute('aria-selected', 'false'); });
+    void win.offsetWidth;
+    scenes[cur].classList.add('on'); steps[cur].setAttribute('aria-selected', 'true');
+    side.forEach(function (s, n) { s.classList.toggle('on', n === cur); });
     status.className = 'win-status ' + STATE[cur][0]; status.lastChild.textContent = STATE[cur][1]; search.textContent = STATE[cur][2];
     if (cur === 0) counter(); else cnt.textContent = '63';
     clearTimeout(timer);
@@ -31,7 +34,7 @@
   pauseBtn.addEventListener('click', function () {
     paused = !paused; demo.classList.toggle('paused', paused);
     pauseBtn.setAttribute('aria-pressed', paused); pauseBtn.textContent = paused ? 'Retomar a demonstração' : 'Pausar a demonstração';
-    go(cur);
+    if (paused) clearTimeout(timer); else go(cur);
   });
 
   if (reduced) { root.classList.add('reduced'); pauseBtn.hidden = true; go(1); cnt.textContent = '63'; }
